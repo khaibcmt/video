@@ -5,7 +5,12 @@ import { VideoPreviewPlayer } from './components/VideoPreviewPlayer';
 import { SceneListEditor } from './components/SceneListEditor';
 import { KeyManagerModal } from './components/KeyManagerModal';
 import { Scene, ThinkingLevelOption, CameraMotion, LutStyle } from './types';
-import { analyzeScript, calculateSceneDuration, normalizeVietnameseNumbers } from './services/scriptAnalyzer';
+import {
+  analyzeScript,
+  calculateSceneDuration,
+  normalizeVietnameseNumbers,
+  scaleScenesToTargetDuration,
+} from './services/scriptAnalyzer';
 import { searchWikimediaCommons, loadImageWithFallback } from './services/mediaLoader';
 import { audioEngine } from './services/audioEngine';
 
@@ -16,7 +21,7 @@ const INITIAL_SCENES: Scene[] = [
     title: 'Kỳ Quan Vịnh Hạ Long',
     narration_vi: 'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn 1.600 hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích 1.553 km2.',
     narration_normalized: 'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn một nghìn sáu trăm hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích một nghìn năm trăm năm mươi ba ki-lô-mét vuông.',
-    search_keywords_en: 'Ha Long Bay limestone cliffs',
+    search_keywords_en: 'Ha Long Bay limestone cliffs vietnam',
     camera_motion: 'zoom-in',
     lut_style: 'cinematic-teal-orange',
     duration_seconds: 9,
@@ -26,7 +31,7 @@ const INITIAL_SCENES: Scene[] = [
     title: 'Hang Động Lung Linh',
     narration_vi: 'Trải qua hơn 500 triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn 120 mét sở hữu thạch nhũ huyền ảo.',
     narration_normalized: 'Trải qua hơn năm trăm triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn một trăm hai mươi mét sở hữu thạch nhũ huyền ảo.',
-    search_keywords_en: 'Sung Sot cave Ha Long',
+    search_keywords_en: 'Sung Sot cave stalactite Ha Long',
     camera_motion: 'pan-right',
     lut_style: 'warm-golden',
     duration_seconds: 11,
@@ -36,7 +41,7 @@ const INITIAL_SCENES: Scene[] = [
     title: 'Nhịp Sống Làng Chài',
     narration_vi: 'Mỗi năm, nơi đây đón hơn 4.000.000 lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.',
     narration_normalized: 'Mỗi năm, nơi đây đón hơn bốn triệu lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.',
-    search_keywords_en: 'Ha Long Bay floating fishing village',
+    search_keywords_en: 'Ha Long Bay floating fishing village emerald water',
     camera_motion: 'zoom-out',
     lut_style: 'natural-documentary',
     duration_seconds: 10,
@@ -53,6 +58,7 @@ export default function App() {
   const [scriptText, setScriptText] = useState<string>(
     `Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn 1.600 hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích 1.553 km2. Trải qua hơn 500 triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn 120 mét sở hữu thạch nhũ huyền ảo. Mỗi năm, nơi đây đón hơn 4.000.000 lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.`
   );
+  const [targetDurationSec, setTargetDurationSec] = useState<number>(60);
   const [scenes, setScenes] = useState<Scene[]>(INITIAL_SCENES);
   const [selectedSceneIndex, setSelectedSceneIndex] = useState<number>(0);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
@@ -118,6 +124,7 @@ export default function App() {
         script: scriptText,
         model: selectedModel,
         thinkingLevel,
+        targetDurationSec,
         onStatusUpdate: (msg) => setAnalysisStatus(msg),
       });
 
@@ -230,6 +237,8 @@ export default function App() {
             onLessonTitleChange={setLessonTitle}
             scriptText={scriptText}
             onScriptTextChange={setScriptText}
+            targetDurationSec={targetDurationSec}
+            onTargetDurationChange={setTargetDurationSec}
             isAnalyzing={isAnalyzing}
             onAnalyzeScript={handleAnalyzeScript}
             onResetVideo={handleResetVideo}
@@ -239,6 +248,10 @@ export default function App() {
           <SceneListEditor
             scenes={scenes}
             selectedSceneIndex={selectedSceneIndex}
+            targetDurationSec={targetDurationSec}
+            onSyncToTargetDuration={() =>
+              setScenes((prev) => scaleScenesToTargetDuration(prev, targetDurationSec))
+            }
             onSelectScene={setSelectedSceneIndex}
             onUpdateScene={handleUpdateScene}
             onDeleteScene={handleDeleteScene}

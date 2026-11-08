@@ -2,10 +2,33 @@ import { Scene, ThinkingLevelOption } from '../types';
 import { keyRotationEngine } from './keyRotation';
 import { matchSamplePreset } from './sampleData';
 
+/**
+ * Strips out extraneous meta-instructions, stage directions, scene headers, and non-spoken text
+ */
+export function cleanExtraneousInstructions(text: string): string {
+  if (!text) return '';
+  return text
+    // Remove bracket tags like [Phân cảnh 1], [Cảnh 2: ...], [Âm nhạc...]
+    .replace(/\[[^\]]*\]/g, '')
+    // Remove parenthetical stage cues like (Nhạc nền nhẹ nhàng), (MC cười), (Chuyển cảnh)
+    .replace(/\([^\)]*(nhạc|cảnh|tiếng|hiệu ứng|camera|video|mc|đạo diễn|zoom|pan|intro|outro)[^\)]*\)/gi, '')
+    // Remove labels like "Phân cảnh 1:", "Cảnh 1:", "Lời bình:", "Lời thoại:", "MC:", "Người dẫn chuyện:"
+    .replace(/(phân cảnh|cảnh|scene)\s*\d+\s*[:\-–.]/gi, '')
+    .replace(/(lời bình|lời thoại|thuyết minh|voiceover|narration|mc|người dẫn chuyện|hình ảnh|mô tả|kịch bản)\s*[:\-–.]/gi, '')
+    // Clean markdown bold/bullets
+    .replace(/[*#_~`]/g, '')
+    // Collapse extra whitespaces
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Calculates reading duration in seconds for Vietnamese narration
+ * duration_seconds = Math.max(5, Math.round(wordCount / 3.25 + 1))
+ */
 export function calculateSceneDuration(narrationNormalized: string): number {
   if (!narrationNormalized) return 5;
   const wordCount = narrationNormalized.trim().split(/\s+/).filter(Boolean).length;
-  // duration_seconds = Math.max(5, Math.round(wordCount / 3.25 + 1))
   return Math.max(5, Math.round(wordCount / 3.25 + 1));
 }
 
@@ -30,7 +53,7 @@ export function normalizeVietnameseNumbers(text: string): string {
     'đ': 'đồng',
   };
 
-  let result = text;
+  let result = cleanExtraneousInstructions(text);
 
   // Replace common units
   result = result.replace(/(\d+)\s*(km|m|cm|mm|kg|g|ha|%)/gi, (_match, num, unit) => {
@@ -44,6 +67,7 @@ export interface AnalyzeScriptParams {
   script: string;
   model: string;
   thinkingLevel: ThinkingLevelOption;
+  targetDurationSec?: number; // 30 to 300 seconds (max 5 minutes)
   onStatusUpdate?: (status: string) => void;
 }
 
@@ -58,29 +82,63 @@ export function isStaticEnvironment(): boolean {
   );
 }
 
+/**
+ * Proportionally adjusts scene durations to match targetDurationSec while guaranteeing
+ * each scene duration >= reading duration of its narration
+ */
+export function scaleScenesToTargetDuration(scenes: Scene[], targetSec: number): Scene[] {
+  if (!scenes || scenes.length === 0) return scenes;
+  const clampedTarget = Math.max(30, Math.min(300, targetSec || 60));
+
+  const minDurations = scenes.map((s) => calculateSceneDuration(s.narration_normalized));
+  const totalMin = minDurations.reduce((acc, d) => acc + d, 0);
+
+  // If target is larger than minimum speech time, distribute remaining time proportionally
+  if (clampedTarget > totalMin) {
+    const extraTime = clampedTarget - totalMin;
+    return scenes.map((s, idx) => {
+      const extraShare = Math.round((minDurations[idx] / totalMin) * extraTime);
+      return {
+        ...s,
+        duration_seconds: minDurations[idx] + extraShare,
+      };
+    });
+  } else {
+    // Keep speech duration so narration doesn't get cut off!
+    return scenes.map((s, idx) => ({
+      ...s,
+      duration_seconds: minDurations[idx],
+    }));
+  }
+}
+
 export async function analyzeScript({
   script,
   model,
   thinkingLevel,
+  targetDurationSec = 60,
   onStatusUpdate,
 }: AnalyzeScriptParams): Promise<Scene[]> {
   if (!script.trim()) {
     throw new Error('Vui lòng nhập nội dung kịch bản hoặc chọn kịch bản mẫu.');
   }
 
+  const cleanScript = cleanExtraneousInstructions(script);
   const isStatic = isStaticEnvironment();
   const keysCount = keyRotationEngine.getTotalKeysCount();
 
   // If on GitHub Pages and user has not configured any API keys yet:
-  // Check if it matches a preset sample script to provide an instant working demo!
   if (isStatic && keysCount === 0) {
     const preset = matchSamplePreset(script);
     if (preset) {
       onStatusUpdate?.('Đang nạp phân cảnh chuẩn mẫu (Chế độ Demo GitHub Pages)...');
-      return preset.map((s) => ({
-        ...s,
-        duration_seconds: calculateSceneDuration(s.narration_normalized),
-      }));
+      return scaleScenesToTargetDuration(
+        preset.map((s) => ({
+          ...s,
+          duration_seconds: calculateSceneDuration(s.narration_normalized),
+        })),
+        targetDurationSec
+      );
     } else {
       throw new Error(
         'Bạn đang chạy trên GitHub Pages (Web Tĩnh). Vui lòng nhấn vào nút "🔑 Keys" ở góc trên để dán ít nhất 1 Gemini API Key của bạn để phân tích kịch bản mới này.'
@@ -88,18 +146,19 @@ export async function analyzeScript({
     }
   }
 
-  onStatusUpdate?.('Đang gửi kịch bản vào Gemini API với cơ chế xoay vòng key...');
+  onStatusUpdate?.('Đang gửi kịch bản vào Gemini API (Xoay vòng Multi-Key)...');
 
   return await keyRotationEngine.executeWithRotation(async (apiKey) => {
     // If running on static host (GitHub Pages), call Google Generative Language REST API directly!
     if (isStatic) {
       if (!apiKey) {
-        const preset = matchSamplePreset(script);
-        if (preset) return preset;
+        const preset = matchSamplePreset(cleanScript);
+        if (preset) return scaleScenesToTargetDuration(preset, targetDurationSec);
         throw new Error('Vui lòng nhập Gemini API Key vào mục Quản Lý Keys trên GitHub Pages.');
       }
       onStatusUpdate?.('Đang gọi trực tiếp Gemini REST API (GitHub Pages Mode)...');
-      return await callGeminiDirectRest(script, model, thinkingLevel, apiKey);
+      const resScenes = await callGeminiDirectRest(cleanScript, model, thinkingLevel, apiKey, targetDurationSec);
+      return scaleScenesToTargetDuration(resScenes, targetDurationSec);
     }
 
     try {
@@ -113,7 +172,8 @@ export async function analyzeScript({
           apiKey,
           model,
           thinkingLevel,
-          prompt: script,
+          prompt: cleanScript,
+          targetDurationSec,
         }),
       });
 
@@ -135,12 +195,13 @@ export async function analyzeScript({
       }
 
       const processedScenes: Scene[] = data.scenes.map((s: any, idx: number) => {
-        const narrationNorm = s.narration_normalized || normalizeVietnameseNumbers(s.narration_vi);
+        const cleanNarration = cleanExtraneousInstructions(s.narration_vi || '');
+        const narrationNorm = s.narration_normalized || normalizeVietnameseNumbers(cleanNarration);
         const duration = calculateSceneDuration(narrationNorm);
         return {
           scene_id: s.scene_id || idx + 1,
           title: s.title || `Phân cảnh ${idx + 1}`,
-          narration_vi: s.narration_vi || '',
+          narration_vi: cleanNarration,
           narration_normalized: narrationNorm,
           search_keywords_en: s.search_keywords_en || 'vietnam landscape cinematic',
           camera_motion: s.camera_motion || 'zoom-in',
@@ -149,12 +210,13 @@ export async function analyzeScript({
         };
       });
 
-      return processedScenes;
+      return scaleScenesToTargetDuration(processedScenes, targetDurationSec);
     } catch (err: any) {
       // Fallback for static hosts or direct client REST
       if ((err.status === 404 || err.message?.includes('404')) && apiKey) {
         onStatusUpdate?.('Đang chuyển hướng gọi trực tiếp Gemini REST API...');
-        return await callGeminiDirectRest(script, model, thinkingLevel, apiKey);
+        const resScenes = await callGeminiDirectRest(cleanScript, model, thinkingLevel, apiKey, targetDurationSec);
+        return scaleScenesToTargetDuration(resScenes, targetDurationSec);
       }
       throw err;
     }
@@ -168,11 +230,29 @@ async function callGeminiDirectRest(
   prompt: string,
   model: string,
   thinkingLevel: ThinkingLevelOption,
-  apiKey: string
+  apiKey: string,
+  targetDurationSec: number = 60
 ): Promise<Scene[]> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-  const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Biên kịch Video Hàng đầu. Phân tích kịch bản tiếng Việt thành mảng các phân cảnh điện ảnh chuẩn JSON theo schema. Tự động chuẩn hóa mọi số và đơn vị đo lường sang chữ tiếng Việt đầy đủ trong trường narration_normalized.`;
+  const durationSec = Math.max(30, Math.min(300, targetDurationSec));
+  const targetMin = Math.floor(durationSec / 60);
+  const targetSecRem = durationSec % 60;
+  const durationDesc = `${targetMin > 0 ? `${targetMin} phút ` : ''}${targetSecRem > 0 ? `${targetSecRem} giây` : ''}`;
+
+  const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Biên kịch Video Hàng đầu.
+Phân tích kịch bản tiếng Việt thành mảng các phân cảnh điện ảnh chuẩn JSON theo schema.
+
+CÁC QUY TẮC BẮT BUỘC:
+1. ĐỘ DÀI MỤC TIÊU:
+   - Tổng độ dài video yêu cầu là: ${durationSec} GIÂY (~${durationDesc}). Tối đa là 5 phút (300 giây).
+   - Hãy chia số phân cảnh và viết dung lượng lời bình tương ứng sao cho tổng thời gian các cảnh cộng lại xấp xỉ bằng ${durationSec} giây (tốc độ đọc ~3.25 từ/giây).
+2. LƯỢC BỎ TỪ KHÔNG LIÊN QUAN ĐẾN LỜI THOẠI:
+   - Trong 'narration_vi', TUYỆT ĐỐI LOẠI BỎ các chú thích kỹ thuật, ghi chú đạo diễn "[Cảnh 1]", "(nhạc dạo)", "MC:", "Người dẫn chuyện:". CHỈ GIỮ LẠI LỜI BÌNH NGUYÊN BẢN trong trẻo để đọc và làm phụ đề.
+3. HÌNH ẢNH LIÊN QUAN TRỰC TIẾP (search_keywords_en):
+   - Chứa 2-3 từ khóa tiếng Anh miêu tả đúng danh từ/chủ thể trọng tâm của phân cảnh đó để tìm kiếm ảnh Wikimedia Commons.
+4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ (narration_normalized):
+   - Tự động chuẩn hóa 100% mọi số, đơn vị, ngày tháng sang chữ tiếng Việt đầy đủ.`;
 
   const requestBody: any = {
     contents: [
@@ -248,11 +328,12 @@ async function callGeminiDirectRest(
   const scenesRaw = JSON.parse(text);
 
   return scenesRaw.map((s: any, idx: number) => {
-    const norm = s.narration_normalized || normalizeVietnameseNumbers(s.narration_vi);
+    const cleanNarration = cleanExtraneousInstructions(s.narration_vi || '');
+    const norm = s.narration_normalized || normalizeVietnameseNumbers(cleanNarration);
     return {
       scene_id: s.scene_id || idx + 1,
       title: s.title || `Phân cảnh ${idx + 1}`,
-      narration_vi: s.narration_vi || '',
+      narration_vi: cleanNarration,
       narration_normalized: norm,
       search_keywords_en: s.search_keywords_en || 'vietnam landscape documentary',
       camera_motion: s.camera_motion || 'zoom-in',

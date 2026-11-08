@@ -89,7 +89,7 @@ async function startServer() {
 
   // Gemini API Endpoint with Multi-Key Support and structured JSON
   app.post('/api/gemini/generate', async (req, res) => {
-    const { apiKey, model = 'gemini-3.8-flash', thinkingLevel, prompt } = req.body;
+    const { apiKey, model = 'gemini-3.8-flash', thinkingLevel, prompt, targetDurationSec = 60 } = req.body;
 
     const effectiveApiKey = apiKey || process.env.GEMINI_API_KEY;
 
@@ -118,25 +118,32 @@ async function startServer() {
       else if (thinkingLevel === 'medium') chosenThinkingLevel = ThinkingLevel.MEDIUM;
       else if (thinkingLevel === 'high') chosenThinkingLevel = ThinkingLevel.HIGH;
 
-      const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Chuyên gia Biên kịch Video Hàng đầu.
-Nhiệm vụ của bạn là nhận kịch bản hoặc chủ đề tiếng Việt từ người dùng và phân tích thành các phân cảnh điện ảnh (scenes) hoàn chỉnh.
+      const durationSec = Math.max(30, Math.min(300, Number(targetDurationSec) || 60));
+      const targetMin = Math.floor(durationSec / 60);
+      const targetSecRemainder = durationSec % 60;
+      const durationDisplay = `${targetMin > 0 ? `${targetMin} phút ` : ''}${targetSecRemainder > 0 ? `${targetSecRemainder} giây` : ''}`;
 
-QUY TẮC BẮT BUỘC:
-1. Chia kịch bản thành từ 3 đến 8 phân cảnh logic, giàu tính hình tượng và cảm xúc.
-2. Với mỗi phân cảnh:
-   - scene_id: số thứ tự bắt đầu từ 1.
-   - title: Tiêu đề phân cảnh ngắn gọn (3-6 từ).
-   - narration_vi: Đoạn lời bình nguyên bản tiếng Việt xúc tích, truyền cảm (khoảng 15-40 từ).
-   - narration_normalized: TỰ ĐỘNG CHUYỂN ĐỔI toàn bộ số, ngày tháng, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy (TTS) phát âm tự nhiên. Ví dụ:
-     * "3.260 km" -> "ba nghìn hai trăm sáu mươi ki-lô-mét"
-     * "160" -> "một trăm sáu mươi"
-     * "năm 1975" -> "năm một nghìn chín trăm bảy mươi lăm"
-     * "99%" -> "chín mươi chín phần trăm"
-     * "100m" -> "một trăm mét"
-     * "$500" -> "năm trăm đô-la"
-   - search_keywords_en: 2-3 từ khóa tiếng Anh ngắn gọn, chính xác để tìm ảnh tư liệu trên Wikimedia Commons (ví dụ: "Ha Long Bay limestone", "ancient silk road desert", "black hole accretion disk").
-   - camera_motion: Chọn 1 trong 4 hiệu ứng: "zoom-in" | "zoom-out" | "pan-left" | "pan-right".
-   - lut_style: Chọn 1 trong 4 tông màu: "cinematic-teal-orange" | "warm-golden" | "natural-documentary" | "high-contrast".
+      const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Chuyên gia Biên kịch Video Hàng đầu.
+Nhiệm vụ của bạn là nhận kịch bản hoặc chỉ dẫn từ người dùng và phân tích thành các phân cảnh điện ảnh (scenes) hoàn chỉnh.
+
+CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
+1. KHỚP ĐỘ DÀI MỤC TIÊU CỦA VIDEO:
+   - Tổng độ dài video người dùng yêu cầu là: ${durationSec} GIÂY (~${durationDisplay}). Tối đa là 5 phút (300 giây).
+   - Hãy tính toán số lượng phân cảnh và dung lượng lời bình của mỗi phân cảnh sao cho tổng thời gian các phân cảnh cộng lại xấp xỉ bằng ${durationSec} giây.
+   - Ước tính tốc độ đọc tự nhiên của người Việt là khoảng 3 đến 3.5 từ mỗi giây.
+   - Thời lượng mỗi cảnh (duration_seconds) phải khớp hoàn hảo với độ dài lời bình của cảnh đó: duration_seconds = Math.max(5, Math.round(wordCount / 3.25 + 1)).
+
+2. LƯỢC BỎ TỪ KHÔNG LIÊN QUAN ĐẾN LỜI THOẠI:
+   - Trong 'narration_vi': TUYỆT ĐỐI LOẠI BỎ mọi ghi chú kỹ thuật, hướng dẫn đạo diễn, ký hiệu kịch bản như "[Cảnh 1]", "(Nhạc nền du dương)", "MC:", "Người dẫn chuyện:", "Hình ảnh:...", các câu lệnh chỉ dẫn của người dùng.
+   - CHỈ GIỮ LẠI LỜI BÌNH / LỜI THOẠI NGUYÊN BẢN trong trẻo, tự nhiên, truyền cảm để đọc và hiển thị phụ đề.
+
+3. HÌNH ẢNH PHẢI LIÊN QUAN TRỰC TIẾP ĐẾN NỘI DUNG PHÂN CẢNH (search_keywords_en):
+   - 'search_keywords_en': Phải chứa 2-3 danh từ cụ thể bằng tiếng Anh mô tả CHỦ THỂ HÌNH ẢNH TRỌNG TÂM của riêng phân cảnh đó để tìm kiếm ảnh trên Wikimedia Commons.
+   - Ví dụ: nếu lời thoại nói về "động Thiên Cung với thạch nhũ lung linh", từ khóa phải là "Thien Cung cave stalactite", không dùng từ chung chung mơ hồ như "vietnam beauty landscape".
+
+4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ THÀNH CHỮ TIẾNG VIỆT (narration_normalized):
+   - TỰ ĐỘNG CHUYỂN ĐỔI 100% các số, ngày tháng, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy phát âm chuẩn xác.
+     Ví dụ: "3.260 km" -> "ba nghìn hai trăm sáu mươi ki-lô-mét", "160" -> "một trăm sáu mươi", "1975" -> "năm một nghìn chín trăm bảy mươi lăm".
 `;
 
       const config: any = {

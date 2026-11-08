@@ -24,67 +24,77 @@ const isStaticHost =
 export async function searchWikimediaCommons(keyword: string): Promise<string | null> {
   if (!keyword || !keyword.trim()) return null;
 
-  try {
-    const cleanKeyword = keyword
-      .replace(/["'#]/g, '')
-      .trim()
-      .split(/\s+/)
-      .slice(0, 4)
-      .join(' ');
+  const trySearch = async (queryStr: string): Promise<string | null> => {
+    try {
+      const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
+        queryStr
+      )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=1280&gsrlimit=8&format=json&origin=*`;
 
-    const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
-      cleanKeyword
-    )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=1280&gsrlimit=8&format=json&origin=*`;
+      const res = await fetch(endpoint, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const pages = data?.query?.pages;
+      if (!pages) return null;
 
-    const res = await fetch(endpoint, {
-      headers: {
-        Accept: 'application/json',
-      },
-    });
+      const validImages: WikimediaImageResult[] = [];
+      Object.values(pages).forEach((page: any) => {
+        const info = page?.imageinfo?.[0];
+        if (info && (info.thumburl || info.url)) {
+          const mime = (info.mime || '').toLowerCase();
+          const url = info.thumburl || info.url;
 
-    if (!res.ok) return null;
-
-    const data = await res.json();
-    const pages = data?.query?.pages;
-    if (!pages) return null;
-
-    const validImages: WikimediaImageResult[] = [];
-
-    Object.values(pages).forEach((page: any) => {
-      const info = page?.imageinfo?.[0];
-      if (info && (info.thumburl || info.url)) {
-        const mime = (info.mime || '').toLowerCase();
-        const url = info.thumburl || info.url;
-
-        // Filter out svgs, tiffs, pdfs, audio/video
-        if (
-          !url.endsWith('.svg') &&
-          !url.endsWith('.tif') &&
-          !url.endsWith('.tiff') &&
-          !url.endsWith('.ogg') &&
-          !url.endsWith('.pdf') &&
-          (mime.includes('jpeg') || mime.includes('jpg') || mime.includes('png') || mime.includes('webp') || url.includes('.jpg') || url.includes('.png'))
-        ) {
-          validImages.push({
-            url: info.url,
-            thumbUrl: info.thumburl || info.url,
-            mime: info.mime || 'image/jpeg',
-            title: page.title || '',
-          });
+          // Filter out svgs, tiffs, pdfs, audio/video
+          if (
+            !url.endsWith('.svg') &&
+            !url.endsWith('.tif') &&
+            !url.endsWith('.tiff') &&
+            !url.endsWith('.ogg') &&
+            !url.endsWith('.pdf') &&
+            (mime.includes('jpeg') || mime.includes('jpg') || mime.includes('png') || mime.includes('webp') || url.includes('.jpg') || url.includes('.png'))
+          ) {
+            validImages.push({
+              url: info.url,
+              thumbUrl: info.thumburl || info.url,
+              mime: info.mime || 'image/jpeg',
+              title: page.title || '',
+            });
+          }
         }
-      }
-    });
+      });
 
-    if (validImages.length > 0) {
-      // Pick best resolution thumbUrl
-      return validImages[0].thumbUrl || validImages[0].url;
+      return validImages.length > 0 ? (validImages[0].thumbUrl || validImages[0].url) : null;
+    } catch {
+      return null;
     }
+  };
 
-    return null;
-  } catch (err) {
-    console.warn('Wikimedia fetch failed for keyword:', keyword, err);
-    return null;
+  // Clean query: remove special characters, filler words, isolate concrete nouns
+  const cleanKeyword = keyword
+    .replace(/[\[\]\(\)"'#$*]/g, '')
+    .trim()
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        !['cinematic', 'photography', 'photo', 'picture', 'image', 'the', 'a', 'an'].includes(
+          w.toLowerCase()
+        )
+    )
+    .slice(0, 4)
+    .join(' ');
+
+  // 1. First attempt with cleaned keywords
+  const result = await trySearch(cleanKeyword);
+  if (result) return result;
+
+  // 2. Fallback attempt with primary 2 visual nouns
+  const primaryNouns = cleanKeyword.split(' ').slice(0, 2).join(' ');
+  if (primaryNouns && primaryNouns !== cleanKeyword) {
+    return await trySearch(primaryNouns);
   }
+
+  return null;
 }
 
 /**
