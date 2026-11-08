@@ -12,6 +12,8 @@ export interface Scene {
   narration_vi: string;
   narration_normalized: string;
   search_keywords_en: string;
+  visual_prompt_en?: string;
+  wikipedia_topic_en?: string;
   camera_motion: CameraMotion;
   lut_style: LutStyle;
   duration_seconds: number;
@@ -19,6 +21,7 @@ export interface Scene {
   imageElement?: HTMLImageElement | null;
   imageLoaded?: boolean;
   imageFailed?: boolean;
+  imageSourceType?: 'ai' | 'wikipedia' | 'wikimedia' | 'procedural';
   audioBlobUrl?: string;
   audioDuration?: number;
 }

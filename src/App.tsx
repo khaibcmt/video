@@ -22,6 +22,8 @@ const INITIAL_SCENES: Scene[] = [
     narration_vi: 'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn 1.600 hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích 1.553 km2.',
     narration_normalized: 'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn một nghìn sáu trăm hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích một nghìn năm trăm năm mươi ba ki-lô-mét vuông.',
     search_keywords_en: 'Ha Long Bay limestone cliffs vietnam',
+    visual_prompt_en: 'Cinematic aerial view of Ha Long Bay Vietnam with emerald green water and towering limestone karst islands under golden morning sunlight',
+    wikipedia_topic_en: 'Hạ Long Bay',
     camera_motion: 'zoom-in',
     lut_style: 'cinematic-teal-orange',
     duration_seconds: 10,
@@ -32,6 +34,8 @@ const INITIAL_SCENES: Scene[] = [
     narration_vi: 'Trải qua hơn 500 triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn 120 mét sở hữu thạch nhũ huyền ảo.',
     narration_normalized: 'Trải qua hơn năm trăm triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn một trăm hai mươi mét sở hữu thạch nhũ huyền ảo.',
     search_keywords_en: 'Sung Sot cave stalactite Ha Long',
+    visual_prompt_en: 'Inside Sung Sot Cave and Thien Cung Cave in Ha Long Bay illuminated with dramatic warm golden and colorful lights on giant limestone stalactites',
+    wikipedia_topic_en: 'Sửng Sốt Cave',
     camera_motion: 'pan-right',
     lut_style: 'warm-golden',
     duration_seconds: 11,
@@ -42,6 +46,8 @@ const INITIAL_SCENES: Scene[] = [
     narration_vi: 'Mỗi năm, nơi đây đón hơn 4.000.000 lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.',
     narration_normalized: 'Mỗi năm, nơi đây đón hơn bốn triệu lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.',
     search_keywords_en: 'Ha Long Bay floating fishing village emerald water',
+    visual_prompt_en: 'Traditional floating fishing village in Ha Long Bay Vietnam with wooden boats on calm emerald water surrounded by karst mountains',
+    wikipedia_topic_en: 'Cửa Vạn',
     camera_motion: 'zoom-out',
     lut_style: 'natural-documentary',
     duration_seconds: 11,
@@ -64,7 +70,7 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
 
-  // Preload both relevant Wikimedia images (without duplicates) and fluent TTS audio buffers for scenes
+  // Preload both relevant story-matched images (without duplicates) and fluent TTS audio buffers for scenes
   const loadMediaForScenes = useCallback(async (scenesToLoad: Scene[]) => {
     const usedUrls = new Set<string>();
 
@@ -76,7 +82,6 @@ export default function App() {
           let changed = false;
           const next = prev.map((sc, idx) => {
             const actualSec = audioDurations[idx];
-            // Add 1.2s breathing space after speech finishes before transitioning scene
             if (actualSec && Math.ceil(actualSec + 1.2) > sc.duration_seconds) {
               changed = true;
               return {
@@ -91,14 +96,17 @@ export default function App() {
       })
       .catch(() => {});
 
-    // 2. Sequentially resolve distinct, high-relevance Wikimedia images per scene so usedUrls prevents duplicates
+    // 2. Sequentially resolve distinct, homologous images per scene (AI Story Image -> Wikipedia -> Wikimedia)
     for (let index = 0; index < scenesToLoad.length; index++) {
       const scene = scenesToLoad[index];
       try {
         const media = await fetchVerifiedSceneMedia(
           scene.search_keywords_en,
           scene.narration_vi,
-          usedUrls
+          usedUrls,
+          scene.visual_prompt_en,
+          scene.wikipedia_topic_en,
+          scene.scene_id || index + 1
         );
         if (media) {
           setScenes((prev) => {
@@ -110,6 +118,7 @@ export default function App() {
                 imageElement: media.imageElement,
                 imageLoaded: true,
                 imageFailed: false,
+                imageSourceType: media.sourceType,
               };
             }
             return copy;
@@ -122,6 +131,7 @@ export default function App() {
                 ...copy[index],
                 imageLoaded: false,
                 imageFailed: true,
+                imageSourceType: 'procedural',
               };
             }
             return copy;
@@ -135,6 +145,7 @@ export default function App() {
               ...copy[index],
               imageLoaded: false,
               imageFailed: true,
+              imageSourceType: 'procedural',
             };
           }
           return copy;

@@ -123,8 +123,8 @@ async function startServer() {
       const targetSecRemainder = durationSec % 60;
       const durationDisplay = `${targetMin > 0 ? `${targetMin} phút ` : ''}${targetSecRemainder > 0 ? `${targetSecRemainder} giây` : ''}`;
 
-      const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Chuyên gia Biên kịch Video Hàng đầu.
-Nhiệm vụ của bạn là nhận kịch bản hoặc chỉ dẫn từ người dùng và phân tích thành các phân cảnh điện ảnh (scenes) hoàn chỉnh.
+      const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Chuyên gia Biên kịch Hình ảnh Hàng đầu.
+Nhiệm vụ của bạn là nhận kịch bản hoặc câu chuyện từ người dùng và phân tích thành các phân cảnh điện ảnh (scenes) đồng cấu 100% giữa lời kể và hình ảnh minh họa.
 
 CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
 1. KHỚP ĐỘ DÀI MỤC TIÊU & NHỊP ĐỌC LƯU LOÁT:
@@ -136,10 +136,11 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
    - Trong 'narration_vi': TUYỆT ĐỐI LOẠI BỎ mọi ghi chú kỹ thuật, hướng dẫn đạo diễn, ký hiệu kịch bản như "[Cảnh 1]", "(Nhạc nền du dương)", "MC:", "Người dẫn chuyện:", "Hình ảnh:...", các câu lệnh chỉ dẫn của người dùng.
    - CHỈ GIỮ LẠI LỜI BÌNH / LỜI THOẠI NGUYÊN BẢN trong trẻo, tự nhiên, truyền cảm để đọc và hiển thị phụ đề.
 
-3. HÌNH ẢNH BẮT BUỘC PHẢI LIÊN QUAN TRỰC TIẾP ĐẾN NỘI DUNG PHÂN CẢNH (search_keywords_en):
-   - 'search_keywords_en': Phải chứa 2-4 danh từ cụ thể bằng tiếng Anh mô tả ĐÚNG VẬT THỂ, ĐỘNG VẬT, ĐỊA DANH hoặc HIỆN TƯỢNG xuất hiện trực tiếp trong câu thoại của phân cảnh đó để tìm kiếm ảnh thật trên Wikimedia Commons.
-   - TUYỆT ĐỐI KHÔNG dùng từ trừu tượng và KHÔNG lặp lại cùng một cụm từ khóa cho nhiều phân cảnh.
-   - Ví dụ: nếu lời thoại nói về "chú rùa biển bơi lội giữa rạn san hô", từ khóa bắt buộc là "sea turtle coral reef ocean", hoặc nói về "động Thiên Cung thạch nhũ", từ khóa là "Thien Cung cave stalactite".
+3. ĐỒNG CẤU HÌNH ẢNH VÀ NỘI DUNG CÂU CHUYỆN 100% (visual_prompt_en, search_keywords_en, wikipedia_topic_en):
+   - Hình ảnh của mỗi cảnh BẮT BUỘC phải miêu tả chính xác nhân vật, con vật, bối cảnh, hành động hoặc sự vật đang diễn ra trong câu thoại của cảnh đó.
+   - 'visual_prompt_en': Viết 1 câu mô tả cảnh quay điện ảnh chi tiết bằng tiếng Anh (Cinematic 16:9 documentary/story illustration, subject, action, setting, lighting) khớp 100% với nội dung câu chuyện của phân cảnh này để vẽ/render đúng hình ảnh câu chuyện.
+   - 'search_keywords_en': 2-3 danh từ cụ thể bằng tiếng Anh chỉ đúng chủ thể thị giác chính của cảnh (ví dụ: "sea turtle swimming ocean", "rabbit and tortoise forest", "Sung Sot cave stalactites"). Không dùng từ trừu tượng và không trùng lặp giữa các cảnh.
+   - 'wikipedia_topic_en': Tên chủ đề hoặc danh từ chính bằng tiếng Anh trên Wikipedia liên quan trực tiếp đến cảnh đó (ví dụ: "Sea turtle", "Hạ Long Bay", "Tortoise", "Silk Road", "Black hole").
 
 4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ THÀNH CHỮ TIẾNG VIỆT (narration_normalized):
    - TỰ ĐỘNG CHUYỂN ĐỔI 100% các con số, ngày tháng, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy phát âm chuẩn xác, không bị khựng.
@@ -151,7 +152,7 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.ARRAY,
-          description: 'Danh sách phân cảnh video tài liệu',
+          description: 'Danh sách phân cảnh video đồng cấu nội dung và hình ảnh',
           items: {
             type: Type.OBJECT,
             properties: {
@@ -162,9 +163,17 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
                 type: Type.STRING,
                 description: 'Lời bình đã chuẩn hóa số và đơn vị thành chữ tiếng Việt',
               },
+              visual_prompt_en: {
+                type: Type.STRING,
+                description: 'Mô tả chi tiết khung hình 16:9 bằng tiếng Anh khớp 100% hành động và nhân vật trong câu thoại',
+              },
               search_keywords_en: {
                 type: Type.STRING,
-                description: '2-3 từ khóa tiếng Anh tìm tư liệu ảnh',
+                description: '2-3 danh từ tiếng Anh cụ thể mô tả chủ thể chính của phân cảnh',
+              },
+              wikipedia_topic_en: {
+                type: Type.STRING,
+                description: 'Tên thực thể/chủ đề tiếng Anh chuẩn trên Wikipedia của cảnh này',
               },
               camera_motion: {
                 type: Type.STRING,
@@ -182,7 +191,9 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
               'title',
               'narration_vi',
               'narration_normalized',
+              'visual_prompt_en',
               'search_keywords_en',
+              'wikipedia_topic_en',
               'camera_motion',
               'lut_style',
             ],
@@ -209,7 +220,6 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
       });
     } catch (err: any) {
       console.error('Gemini API Error:', err);
-      // Extract error status code for key rotation failover
       let statusCode = 500;
       const errMsg = err?.message || String(err);
       if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
@@ -227,6 +237,57 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
           details: err,
         },
       });
+    }
+  });
+
+  // Endpoint to generate exact story-matched scene image using Gemini Image model if available
+  app.post('/api/gemini/generate-scene-image', async (req, res) => {
+    const { apiKey, visualPrompt } = req.body;
+    const effectiveApiKey = apiKey || process.env.GEMINI_API_KEY;
+
+    if (!effectiveApiKey || !visualPrompt) {
+      res.status(400).json({ error: 'Missing apiKey or visualPrompt' });
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: effectiveApiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-lite-image',
+        contents: {
+          parts: [
+            {
+              text: `Cinematic 16:9 high-resolution illustration/photography, no text, no watermark, vivid storytelling composition: ${visualPrompt}`,
+            },
+          ],
+        },
+        config: {
+          imageConfig: {
+            aspectRatio: '16:9',
+          },
+        },
+      });
+
+      for (const part of response.candidates?.[0]?.content?.parts ?? []) {
+        if (part.inlineData?.data) {
+          const mime = part.inlineData.mimeType || 'image/png';
+          const dataUrl = `data:${mime};base64,${part.inlineData.data}`;
+          res.json({ success: true, imageUrl: dataUrl });
+          return;
+        }
+      }
+
+      res.status(404).json({ error: 'No image generated' });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Image generation failed' });
     }
   });
 

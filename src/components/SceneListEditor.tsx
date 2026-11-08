@@ -17,7 +17,11 @@ import {
 } from 'lucide-react';
 import { Scene, CameraMotion, LutStyle } from '../types';
 import { audioEngine } from '../services/audioEngine';
-import { fetchVerifiedSceneMedia } from '../services/mediaLoader';
+import {
+  fetchVerifiedSceneMedia,
+  generateStorySceneImage,
+  loadImageWithFallback,
+} from '../services/mediaLoader';
 import { calculateSceneDuration, normalizeVietnameseNumbers } from '../services/scriptAnalyzer';
 
 interface SceneListEditorProps {
@@ -62,7 +66,10 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
       const media = await fetchVerifiedSceneMedia(
         keywords,
         scene?.narration_vi,
-        usedUrls
+        usedUrls,
+        scene?.visual_prompt_en,
+        scene?.wikipedia_topic_en,
+        (scene?.scene_id || index + 1) + Math.floor(Math.random() * 50)
       );
       if (media) {
         onUpdateScene(index, {
@@ -70,18 +77,62 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
           imageElement: media.imageElement,
           imageLoaded: true,
           imageFailed: false,
+          imageSourceType: media.sourceType,
         });
       } else {
         onUpdateScene(index, {
           imageLoaded: false,
           imageFailed: true,
+          imageSourceType: 'procedural',
         });
       }
     } catch {
       onUpdateScene(index, {
         imageLoaded: false,
         imageFailed: true,
+        imageSourceType: 'procedural',
       });
+    }
+  };
+
+  const handleGenerateAiSceneImage = async (index: number) => {
+    const scene = scenes[index];
+    if (!scene) return;
+    const promptToUse =
+      scene.visual_prompt_en || `${scene.search_keywords_en} - ${scene.narration_vi}`;
+
+    try {
+      const aiUrl = await generateStorySceneImage(
+        promptToUse,
+        (scene.scene_id || index + 1) + Math.floor(Math.random() * 100)
+      );
+      if (aiUrl) {
+        const img = await loadImageWithFallback(aiUrl, 9000);
+        onUpdateScene(index, {
+          imageUrl: aiUrl,
+          imageElement: img,
+          imageLoaded: true,
+          imageFailed: false,
+          imageSourceType: 'ai',
+        });
+        return;
+      }
+      // Fallback to direct 16:9 story synthesizer
+      const cleanPrompt = encodeURIComponent(
+        `cinematic 16:9 illustration of ${promptToUse}, vivid storytelling, no text`
+      );
+      const seed = Math.floor(Math.random() * 10000);
+      const streamUrl = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=1280&height=720&nologo=true&seed=${seed}`;
+      const img = await loadImageWithFallback(streamUrl, 9000);
+      onUpdateScene(index, {
+        imageUrl: streamUrl,
+        imageElement: img,
+        imageLoaded: true,
+        imageFailed: false,
+        imageSourceType: 'ai',
+      });
+    } catch {
+      handleRefetchImage(index, scene.search_keywords_en);
     }
   };
 
@@ -279,10 +330,22 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
+                        handleGenerateAiSceneImage(idx);
+                      }}
+                      className="p-1.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-slate-950 text-[10px] font-bold flex items-center gap-1"
+                      title="Vẽ ảnh AI 16:9 đồng cấu 100% nội dung câu chuyện của cảnh này"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>AI</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
                         handleRefetchImage(idx, scene.search_keywords_en);
                       }}
                       className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1"
-                      title="Tìm lại ảnh Wikimedia Commons"
+                      title="Tìm ảnh Wikipedia / Wikimedia Commons"
                     >
                       <Search className="w-3 h-3 text-amber-400" />
                     </button>
@@ -345,7 +408,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                   {/* Search Keywords */}
                   <div>
                     <label className="text-[10px] font-semibold text-slate-400 block mb-1 flex items-center gap-1">
-                      <Search className="w-3 h-3 text-emerald-400" /> Từ khóa Media (EN)
+                      <Search className="w-3 h-3 text-emerald-400" /> Chủ thể Hình ảnh (EN)
                     </label>
                     <div className="flex items-center gap-1">
                       <input
@@ -359,9 +422,17 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                       />
                       <button
                         type="button"
+                        onClick={() => handleGenerateAiSceneImage(idx)}
+                        className="p-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-lg text-amber-300 transition"
+                        title="Vẽ ảnh AI 16:9 đồng cấu 100% nội dung cảnh này"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleRefetchImage(idx, scene.search_keywords_en)}
                         className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition"
-                        title="Tìm ảnh"
+                        title="Đổi ảnh tư liệu khác"
                       >
                         <RefreshCw className="w-3 h-3 text-amber-400" />
                       </button>

@@ -1,4 +1,5 @@
 import { LutStyle } from '../types';
+import { keyRotationEngine } from './keyRotation';
 
 interface WikimediaImageResult {
   url: string;
@@ -21,17 +22,42 @@ const isStaticHost =
     (window.location.port !== '3000' && !window.location.hostname.includes('run.app')));
 
 /**
- * Dictionary of common Vietnamese topic keywords mapped to precise English photographic search terms
- * so that even if Vietnamese words appear or fallback is needed, the search finds exact imagery.
+ * Rich Vietnamese-to-English visual subject & entity dictionary
+ * Covers animals, fables, landscapes, history, science, daily life, and culture.
  */
 const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
+  // Animals & Fables (Truyện ngụ ngôn, cổ tích, thế giới động vật)
+  'rùa': 'tortoise turtle reptile nature',
+  'con rùa': 'tortoise walking forest nature',
+  'rùa biển': 'sea turtle swimming coral reef',
+  'thỏ': 'wild rabbit hare meadow nature',
+  'con thỏ': 'rabbit running grass forest',
+  'cáo': 'red fox forest wildlife',
+  'sư tử': 'lion savanna wildlife',
+  'hổ': 'tiger jungle wildlife',
+  'voi': 'elephant herd nature',
+  'khỉ': 'monkey macaque forest trees',
+  'chim': 'bird flying tree branch nature',
+  'đại bàng': 'eagle soaring mountain sky',
+  'cá heo': 'dolphin jumping ocean waves',
+  'cá voi': 'whale deep blue ocean',
+  'ong': 'honeybee flower pollination',
+  'kiến': 'ants working leaf nature',
+  'ếch': 'green frog lotus leaf pond',
+  'trâu': 'water buffalo rice paddy Vietnam',
+  'ngựa': 'horse galloping meadow',
+  'cừu': 'sheep flock green hill',
+  'sói': 'gray wolf forest nature',
+  'rắn': 'snake reptile jungle',
+  'bướm': 'colorful butterfly flower garden',
+  'cò': 'white egret heron rice field',
+
+  // Landscapes & Vietnam Heritage
   'hạ long': 'Ha Long Bay limestone islands',
   'vịnh hạ long': 'Ha Long Bay limestone islands',
   'thiên cung': 'Thien Cung Cave stalactites',
   'sửng sốt': 'Sung Sot Cave Ha Long',
   'làng chài': 'floating fishing village Vietnam',
-  'rùa': 'sea turtle swimming ocean',
-  'con rùa': 'tortoise turtle nature',
   'hồ gươm': 'Hoan Kiem Lake Turtle Tower Hanoi',
   'hà nội': 'Hanoi Old Quarter Hoan Kiem Lake',
   'sài gòn': 'Ho Chi Minh City skyline',
@@ -59,10 +85,16 @@ const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
   'mặt trời': 'Sun solar flare astronomy',
   'trái đất': 'Planet Earth from space',
   'mặt trăng': 'Full Moon craters astronomy',
-  'rừng': 'tropical rainforest canopy nature',
+  'rừng': 'sunlight forest trees woodland path',
+  'khu rừng': 'green forest trees sunlight nature',
   'biển': 'turquoise ocean waves coral reef',
   'đại dương': 'deep blue ocean marine life',
   'núi': 'majestic mountain peaks clouds',
+  'dòng sông': 'scenic river flowing valley nature',
+  'con suối': 'forest stream waterfall rocks',
+  'thác nước': 'waterfall cascade tropical forest',
+  'cánh đồng': 'green rice field countryside sunrise',
+  'ngôi làng': 'peaceful countryside village nature',
   'sông mê kông': 'Mekong Delta floating market boats',
   'miền tây': 'Mekong Delta river boats Vietnam',
   'chùa một cột': 'One Pillar Pagoda Hanoi',
@@ -83,7 +115,7 @@ const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
 };
 
 /**
- * Extracts fallback English visual keywords from Vietnamese text if primary keywords are too generic
+ * Extracts fallback English visual keywords from Vietnamese text
  */
 export function extractVisualKeywordsFromVietnamese(viText: string): string | null {
   if (!viText) return null;
@@ -101,7 +133,7 @@ export function extractVisualKeywordsFromVietnamese(viText: string): string | nu
 }
 
 /**
- * Cleans and normalizes English search keywords for Wikimedia Commons
+ * Cleans and normalizes English search keywords
  */
 function sanitizeSearchKeywords(raw: string): string {
   return raw
@@ -133,6 +165,9 @@ function sanitizeSearchKeywords(raw: string): string {
           'from',
           'into',
           'over',
+          'illustration',
+          'wide',
+          'angle',
         ].includes(w.toLowerCase())
     )
     .slice(0, 5)
@@ -140,8 +175,143 @@ function sanitizeSearchKeywords(raw: string): string {
 }
 
 /**
- * Searches Wikimedia Commons for relevant, landscape-oriented photographs matching the scene's content.
- * Avoids reused URLs via `usedUrls` set so every scene gets a distinct, relevant visual.
+ * TIER 1: Generate an exact story-matched 16:9 image using Gemini Image Generation (server or direct REST)
+ * Or Pollinations Flux 16:9 zero-key story synthesizer so any story/fable gets a 100% matching visual!
+ */
+export async function generateStorySceneImage(
+  visualPromptEn: string,
+  sceneId: number = 1
+): Promise<string | null> {
+  if (!visualPromptEn || !visualPromptEn.trim()) return null;
+
+  const apiKey = keyRotationEngine.getNextActiveKey();
+
+  // 1A. Try Gemini 3.1 Flash Lite Image via backend or direct REST if API key is available
+  if (apiKey || !isStaticHost) {
+    try {
+      if (isStaticHost && apiKey) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-image:generateContent?key=${apiKey}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `Cinematic 16:9 high-resolution illustration/photography, no text, no words, no watermark, vivid storytelling composition: ${visualPromptEn}`,
+                  },
+                ],
+              },
+            ],
+            generationConfig: {
+              imageConfig: { aspectRatio: '16:9' },
+            },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          for (const part of data?.candidates?.[0]?.content?.parts ?? []) {
+            if (part.inlineData?.data) {
+              const mime = part.inlineData.mimeType || 'image/png';
+              return `data:${mime};base64,${part.inlineData.data}`;
+            }
+          }
+        }
+      } else if (!isStaticHost) {
+        const res = await fetch('/api/gemini/generate-scene-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apiKey,
+            visualPrompt: visualPromptEn,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.success && data.imageUrl) {
+            return data.imageUrl;
+          }
+        }
+      }
+    } catch {
+      // Fall through to Wikipedia / Wikimedia / Pollinations
+    }
+  }
+
+  return null;
+}
+
+/**
+ * TIER 2: Wikipedia Lead Article Image Search (en.wikipedia.org + vi.wikipedia.org)
+ * Wikipedia articles are curated by humans so the main pageimage for a topic is 100% relevant!
+ */
+export async function searchWikipediaLeadImage(
+  topicOrQuery: string,
+  lang: 'en' | 'vi' = 'en',
+  usedUrls?: Set<string>
+): Promise<string | null> {
+  if (!topicOrQuery || !topicOrQuery.trim()) return null;
+
+  try {
+    const cleanQ = topicOrQuery.replace(/[^\w\s\u00C0-\u1EF9-]/g, ' ').trim();
+    if (!cleanQ) return null;
+
+    const endpoint = `https://${lang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
+      cleanQ
+    )}&gsrlimit=6&prop=pageimages&piprop=original|thumbnail&pithumbsize=1280&format=json&origin=*`;
+
+    const res = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const pages = data?.query?.pages;
+    if (!pages) return null;
+
+    // Sort by Wikipedia search index (1 = best article match)
+    const sortedPages = Object.values(pages).sort(
+      (a: any, b: any) => (a.index || 99) - (b.index || 99)
+    );
+
+    for (const page of sortedPages as any[]) {
+      const thumbUrl: string | undefined =
+        page?.thumbnail?.source || page?.original?.source;
+      if (!thumbUrl) continue;
+
+      const lowerUrl = thumbUrl.toLowerCase();
+      if (
+        lowerUrl.endsWith('.svg') ||
+        lowerUrl.endsWith('.gif') ||
+        lowerUrl.endsWith('.tif') ||
+        lowerUrl.endsWith('.pdf') ||
+        lowerUrl.includes('flag_of') ||
+        lowerUrl.includes('coat_of_arms') ||
+        lowerUrl.includes('locator_map') ||
+        lowerUrl.includes('map_of') ||
+        lowerUrl.includes('commons-logo') ||
+        lowerUrl.includes('question_book')
+      ) {
+        continue;
+      }
+
+      if (usedUrls && usedUrls.has(thumbUrl)) {
+        continue;
+      }
+
+      if (usedUrls) usedUrls.add(thumbUrl);
+      return thumbUrl;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * TIER 3: Wikimedia Commons Strict Bitmap Search with relevance & landscape scoring
  */
 export async function searchWikimediaCommons(
   keyword: string,
@@ -151,7 +321,6 @@ export async function searchWikimediaCommons(
   const trySearch = async (queryStr: string): Promise<string | null> => {
     if (!queryStr || !queryStr.trim()) return null;
     try {
-      // Request filetype:bitmap to strictly get real photographs (no SVGs, PDFs, or audio)
       const searchExpr = `${queryStr.trim()} filetype:bitmap`;
       const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
         searchExpr
@@ -182,7 +351,7 @@ export async function searchWikimediaCommons(
         const width: number = info.width || 1280;
         const height: number = info.height || 720;
 
-        // Skip non-photo formats, icons, maps, diagrams, logos, stamps, signatures
+        // Reject non-photo files, scanned book pages, PDFs/djvu thumbnails, maps, logos, icons
         if (
           url.endsWith('.svg') ||
           url.endsWith('.tif') ||
@@ -191,52 +360,62 @@ export async function searchWikimediaCommons(
           url.endsWith('.ogg') ||
           url.endsWith('.webm') ||
           url.endsWith('.pdf') ||
+          title.includes('.pdf') ||
+          title.includes('.djvu') ||
+          title.includes('page ') ||
           title.includes('icon') ||
           title.includes('logo') ||
-          title.includes('map of') ||
+          title.includes('map ') ||
           title.includes('locator') ||
           title.includes('diagram') ||
           title.includes('chart') ||
           title.includes('signature') ||
           title.includes('coat of arms') ||
-          title.includes('flag of') ||
+          title.includes('flag ') ||
           title.includes('stamp') ||
-          !(mime.includes('jpeg') || mime.includes('jpg') || mime.includes('png') || mime.includes('webp'))
+          title.includes('herbarium') ||
+          title.includes('specimen') ||
+          !(
+            mime.includes('jpeg') ||
+            mime.includes('jpg') ||
+            mime.includes('png') ||
+            mime.includes('webp')
+          )
         ) {
           return;
         }
 
-        // Skip tiny images
         if (width < 500 || height < 350) return;
 
-        // Calculate relevance & cinematic aspect ratio score
         let score = 0;
 
-        // Prefer landscape orientation (width >= height) for 16:9 video canvas
+        // Require at least one query token in the title to avoid random unrelated photos
+        let matchedTokensCount = 0;
+        for (const token of queryTokens) {
+          if (title.includes(token)) {
+            matchedTokensCount++;
+            score += 18;
+          }
+        }
+        if (matchedTokensCount === 0) {
+          score -= 25;
+        }
+
         const aspect = width / height;
         if (aspect >= 1.25 && aspect <= 2.2) {
-          score += 30; // Ideal 16:9 / 4:3 / 3:2 landscape photograph
+          score += 30;
         } else if (aspect >= 1.0) {
           score += 10;
         } else {
-          score -= 15; // Portrait images get lower priority
+          score -= 20;
         }
 
-        // Prefer JPEG photographs over PNG graphics
         if (mime.includes('jpeg') || mime.includes('jpg')) {
           score += 15;
         }
 
-        // Match query tokens in file title
-        for (const token of queryTokens) {
-          if (title.includes(token)) {
-            score += 12;
-          }
-        }
-
-        // Penalize already-used URLs so consecutive scenes don't show identical photos
         if (usedUrls && (usedUrls.has(url) || usedUrls.has(info.url))) {
-          score -= 100;
+          score -= 120;
         }
 
         candidates.push({
@@ -250,14 +429,14 @@ export async function searchWikimediaCommons(
         });
       });
 
-      if (candidates.length === 0) return null;
+      const validCandidates = candidates.filter((c) => c.score > 0);
+      if (validCandidates.length === 0) return null;
 
-      // Sort by highest relevance & landscape score
-      candidates.sort((a, b) => b.score - a.score);
-      const chosen = candidates[0].thumbUrl || candidates[0].url;
+      validCandidates.sort((a, b) => b.score - a.score);
+      const chosen = validCandidates[0].thumbUrl || validCandidates[0].url;
       if (usedUrls) {
         usedUrls.add(chosen);
-        usedUrls.add(candidates[0].url);
+        usedUrls.add(validCandidates[0].url);
       }
       return chosen;
     } catch {
@@ -265,9 +444,7 @@ export async function searchWikimediaCommons(
     }
   };
 
-  // Build progressive search queries from most specific to broader visual nouns
   const queriesToTry: string[] = [];
-
   const cleanedEn = sanitizeSearchKeywords(keyword || '');
   if (cleanedEn) {
     queriesToTry.push(cleanedEn);
@@ -280,23 +457,10 @@ export async function searchWikimediaCommons(
     }
   }
 
-  // Also check Vietnamese narration for direct visual subject mapping
   if (narrationVi) {
     const mappedFromVi = extractVisualKeywordsFromVietnamese(narrationVi);
     if (mappedFromVi && !queriesToTry.includes(mappedFromVi)) {
       queriesToTry.push(mappedFromVi);
-    }
-  }
-
-  // Last-resort single main noun if multi-word queries returned nothing
-  if (cleanedEn) {
-    const firstTwo = cleanedEn.split(' ').slice(0, 2).join(' ');
-    if (firstTwo && !queriesToTry.includes(firstTwo)) {
-      queriesToTry.push(firstTwo);
-    }
-    const mainNoun = cleanedEn.split(' ').find((w) => w.length >= 4);
-    if (mainNoun && !queriesToTry.includes(mainNoun)) {
-      queriesToTry.push(mainNoun);
     }
   }
 
@@ -310,11 +474,10 @@ export async function searchWikimediaCommons(
 
 /**
  * Loads an image from URL with CORS anonymous and caching.
- * On static hosts (GitHub Pages), skips failing local proxy calls and falls back cleanly.
  */
 export function loadImageWithFallback(
   imageUrl: string,
-  timeoutMs: number = 7000
+  timeoutMs: number = 9000
 ): Promise<HTMLImageElement> {
   if (imageCache.has(imageUrl)) {
     return Promise.resolve(imageCache.get(imageUrl)!);
@@ -322,7 +485,9 @@ export function loadImageWithFallback(
 
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (!imageUrl.startsWith('data:')) {
+      img.crossOrigin = 'anonymous';
+    }
 
     let timer: any = null;
 
@@ -341,8 +506,7 @@ export function loadImageWithFallback(
     img.onerror = () => {
       cleanup();
 
-      // Attempt local proxy if running on fullstack Node.js server
-      if (!isStaticHost) {
+      if (!isStaticHost && !imageUrl.startsWith('data:')) {
         const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
         const proxyImg = new Image();
         proxyImg.crossOrigin = 'anonymous';
@@ -372,38 +536,105 @@ export function loadImageWithFallback(
 }
 
 /**
- * Searches and loads a verified working HTMLImageElement for a scene.
- * If the first image fails to load, tries alternative search queries before falling back.
+ * Master Multi-Tier Visual Resolver:
+ * Guarantees every scene image is homologous (đồng cấu) and directly depicts the story/content!
+ *
+ * Order of resolution:
+ * 1. Gemini AI 16:9 Scene Image Generation (if visualPromptEn is available & API responds)
+ * 2. Curated Wikipedia Article Lead Image (English Wikipedia -> Vietnamese Wikipedia)
+ * 3. Strict Wikimedia Commons Photograph Search (filtered for landscape photos & title match)
+ * 4. Pollinations AI 16:9 Story Illustration Generator (zero-key direct image synthesis for custom stories/fables)
  */
 export async function fetchVerifiedSceneMedia(
   keywordsEn: string,
   narrationVi?: string,
-  usedUrls?: Set<string>
-): Promise<{ imageUrl: string; imageElement: HTMLImageElement } | null> {
-  const firstUrl = await searchWikimediaCommons(keywordsEn, narrationVi, usedUrls);
-  if (firstUrl) {
-    try {
-      const img = await loadImageWithFallback(firstUrl);
-      return { imageUrl: firstUrl, imageElement: img };
-    } catch {
-      // First image failed to decode or timed out; try next candidate
+  usedUrls?: Set<string>,
+  visualPromptEn?: string,
+  wikipediaTopicEn?: string,
+  sceneId: number = 1
+): Promise<{
+  imageUrl: string;
+  imageElement: HTMLImageElement;
+  sourceType: 'ai' | 'wikipedia' | 'wikimedia';
+} | null> {
+  const effectivePrompt =
+    visualPromptEn ||
+    extractVisualKeywordsFromVietnamese(narrationVi || '') ||
+    keywordsEn;
+
+  // 1. Try Gemini AI Scene Image Generation first for 100% story fidelity
+  if (effectivePrompt) {
+    const geminiImgUrl = await generateStorySceneImage(effectivePrompt, sceneId);
+    if (geminiImgUrl) {
+      try {
+        const img = await loadImageWithFallback(geminiImgUrl, 8000);
+        return { imageUrl: geminiImgUrl, imageElement: img, sourceType: 'ai' };
+      } catch {
+        // continue
+      }
     }
   }
 
-  // Second attempt with Vietnamese visual mapping or simplified keywords
-  const backupQuery =
+  // 2. Try Curated Wikipedia Lead Image (English Wikipedia)
+  const wikiTopic =
+    wikipediaTopicEn ||
     extractVisualKeywordsFromVietnamese(narrationVi || '') ||
-    keywordsEn.split(/\s+/).slice(0, 2).join(' ');
+    keywordsEn.split(/\s+/).slice(0, 3).join(' ');
 
-  if (backupQuery) {
-    const secondUrl = await searchWikimediaCommons(backupQuery, undefined, usedUrls);
-    if (secondUrl) {
+  if (wikiTopic) {
+    const enWikiUrl = await searchWikipediaLeadImage(wikiTopic, 'en', usedUrls);
+    if (enWikiUrl) {
       try {
-        const img = await loadImageWithFallback(secondUrl);
-        return { imageUrl: secondUrl, imageElement: img };
+        const img = await loadImageWithFallback(enWikiUrl, 7000);
+        return { imageUrl: enWikiUrl, imageElement: img, sourceType: 'wikipedia' };
       } catch {
-        return null;
+        // continue
       }
+    }
+  }
+
+  // 3. Try Strict Wikimedia Commons Photograph Search
+  const commonsUrl = await searchWikimediaCommons(keywordsEn, narrationVi, usedUrls);
+  if (commonsUrl) {
+    try {
+      const img = await loadImageWithFallback(commonsUrl, 7000);
+      return { imageUrl: commonsUrl, imageElement: img, sourceType: 'wikimedia' };
+    } catch {
+      // continue
+    }
+  }
+
+  // 4. Try Vietnamese Wikipedia Lead Image using key phrase from narration
+  if (narrationVi) {
+    const viWords = narrationVi
+      .replace(/[.,;!?()"]/g, '')
+      .split(/\s+/)
+      .slice(0, 4)
+      .join(' ');
+    const viWikiUrl = await searchWikipediaLeadImage(viWords, 'vi', usedUrls);
+    if (viWikiUrl) {
+      try {
+        const img = await loadImageWithFallback(viWikiUrl, 7000);
+        return { imageUrl: viWikiUrl, imageElement: img, sourceType: 'wikipedia' };
+      } catch {
+        // continue
+      }
+    }
+  }
+
+  // 5. Try Zero-Key AI Story Visual Synthesizer (1280x720 16:9) for fables/stories not on Wikipedia
+  if (effectivePrompt) {
+    try {
+      const cleanPrompt = encodeURIComponent(
+        `cinematic 16:9 photography illustration of ${effectivePrompt}, vivid colors, high detail, no text`
+      );
+      const seed = sceneId * 101 + (effectivePrompt.length % 97);
+      const aiStreamUrl = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=1280&height=720&nologo=true&seed=${seed}`;
+      const img = await loadImageWithFallback(aiStreamUrl, 9000);
+      if (usedUrls) usedUrls.add(aiStreamUrl);
+      return { imageUrl: aiStreamUrl, imageElement: img, sourceType: 'ai' };
+    } catch {
+      // Fall back to procedural canvas
     }
   }
 

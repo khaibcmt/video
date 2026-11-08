@@ -328,6 +328,8 @@ export async function analyzeScript({
           narration_vi: cleanNarration,
           narration_normalized: narrationNorm,
           search_keywords_en: s.search_keywords_en || fallbackKw,
+          visual_prompt_en: s.visual_prompt_en || s.search_keywords_en || fallbackKw,
+          wikipedia_topic_en: s.wikipedia_topic_en || '',
           camera_motion: s.camera_motion || 'zoom-in',
           lut_style: s.lut_style || 'cinematic-teal-orange',
           duration_seconds: duration,
@@ -371,8 +373,8 @@ async function callGeminiDirectRest(
     targetSecRem > 0 ? `${targetSecRem} giây` : ''
   }`;
 
-  const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Biên kịch Video Hàng đầu.
-Phân tích kịch bản tiếng Việt thành mảng các phân cảnh điện ảnh chuẩn JSON theo schema.
+  const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Biên kịch Hình ảnh Hàng đầu.
+Phân tích kịch bản hoặc câu chuyện tiếng Việt thành mảng các phân cảnh điện ảnh chuẩn JSON đồng cấu 100% giữa lời thoại và hình ảnh.
 
 CÁC QUY TẮC BẮT BUỘC:
 1. ĐỘ DÀI MỤC TIÊU & LỜI THOẠI MƯỢT MÀ:
@@ -380,9 +382,10 @@ CÁC QUY TẮC BẮT BUỘC:
    - Mỗi phân cảnh nên có từ 1 đến 2 câu lời bình rõ ràng, súc tích (khoảng 20-38 từ/cảnh) để người đọc lồng tiếng đọc lưu loát, tự nhiên, không bị hụt hơi.
 2. LƯỢC BỎ TỪ KHÔNG LIÊN QUAN ĐẾN LỜI THOẠI:
    - Trong 'narration_vi', TUYỆT ĐỐI LOẠI BỎ các chú thích kỹ thuật, ghi chú đạo diễn "[Cảnh 1]", "(nhạc dạo)", "MC:", "Người dẫn chuyện:". CHỈ GIỮ LẠI LỜI BÌNH NGUYÊN BẢN trong trẻo để đọc và làm phụ đề.
-3. HÌNH ẢNH BẮT BUỘC PHẢI LIÊN QUAN TRỰC TIẾP ĐẾN NỘI DUNG CHỈ DẪN (search_keywords_en):
-   - 'search_keywords_en' PHẢI chứa 2-4 danh từ cụ thể bằng tiếng Anh miêu tả ĐÚNG VẬT THỂ / ĐỊA DANH / ĐỘNG VẬT / HIỆN TƯỢNG xuất hiện trong lời thoại của phân cảnh đó để tìm kiếm ảnh thật trên Wikimedia Commons.
-   - TUYỆT ĐỐI KHÔNG dùng các từ trừu tượng hoặc lặp lại cùng một từ khóa cho nhiều cảnh khác nhau. Mỗi cảnh phải có từ khóa hình ảnh riêng biệt sát với câu thoại của cảnh đó.
+3. ĐỒNG CẤU HÌNH ẢNH VÀ CÂU CHUYỆN 100% (visual_prompt_en, search_keywords_en, wikipedia_topic_en):
+   - 'visual_prompt_en': 1 câu mô tả khung hình 16:9 bằng tiếng Anh chi tiết về nhân vật, hành động, bối cảnh xảy ra trong câu thoại của cảnh này.
+   - 'search_keywords_en': 2-3 danh từ tiếng Anh cụ thể miêu tả đúng vật thể/động vật/địa danh xuất hiện trong cảnh đó để tìm kiếm ảnh. Mỗi cảnh phải có từ khóa riêng biệt.
+   - 'wikipedia_topic_en': Chủ đề/thực thể chuẩn tiếng Anh trên Wikipedia khớp với nội dung cảnh này.
 4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ (narration_normalized):
    - Tự động chuyển đổi 100% mọi con số, đơn vị, ngày tháng sang chữ tiếng Việt đầy đủ để đọc trôi chảy.`;
 
@@ -407,7 +410,9 @@ CÁC QUY TẮC BẮT BUỘC:
             title: { type: 'STRING' },
             narration_vi: { type: 'STRING' },
             narration_normalized: { type: 'STRING' },
+            visual_prompt_en: { type: 'STRING' },
             search_keywords_en: { type: 'STRING' },
+            wikipedia_topic_en: { type: 'STRING' },
             camera_motion: {
               type: 'STRING',
               enum: ['zoom-in', 'zoom-out', 'pan-left', 'pan-right'],
@@ -427,7 +432,9 @@ CÁC QUY TẮC BẮT BUỘC:
             'title',
             'narration_vi',
             'narration_normalized',
+            'visual_prompt_en',
             'search_keywords_en',
+            'wikipedia_topic_en',
             'camera_motion',
             'lut_style',
           ],
@@ -475,6 +482,8 @@ CÁC QUY TẮC BẮT BUỘC:
       narration_vi: cleanNarration,
       narration_normalized: norm,
       search_keywords_en: s.search_keywords_en || fallbackKw,
+      visual_prompt_en: s.visual_prompt_en || s.search_keywords_en || fallbackKw,
+      wikipedia_topic_en: s.wikipedia_topic_en || '',
       camera_motion: s.camera_motion || 'zoom-in',
       lut_style: s.lut_style || 'cinematic-teal-orange',
       duration_seconds: calculateSceneDuration(norm),
