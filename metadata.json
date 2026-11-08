@@ -1,0 +1,6 @@
+{
+  "name": "VietVideo AI Studio - Web Video Engine",
+  "description": "Ứng dụng dựng video tự động từ kịch bản tiếng Việt với Gemini API Multi-key Rotation, Ken Burns Canvas, Audio Ducking và xuất WebM / SRT.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
