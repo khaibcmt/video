@@ -121,10 +121,26 @@ export class CanvasRenderer {
     const filterStr = this.getFilterString(scene.lut_style);
     ctx.filter = filterStr;
 
-    // Source image or procedural background
+    // Source video, image, or procedural background
     let sourceDrawable: CanvasImageSource;
-    if (scene.imageElement && scene.imageLoaded) {
+    let sourceW = width;
+    let sourceH = height;
+
+    if (
+      scene.videoElement &&
+      scene.videoLoaded &&
+      scene.videoElement.readyState >= 2
+    ) {
+      if (scene.videoElement.paused) {
+        scene.videoElement.play().catch(() => {});
+      }
+      sourceDrawable = scene.videoElement;
+      sourceW = scene.videoElement.videoWidth || width;
+      sourceH = scene.videoElement.videoHeight || height;
+    } else if (scene.imageElement && scene.imageLoaded) {
       sourceDrawable = scene.imageElement;
+      sourceW = scene.imageElement.naturalWidth || width;
+      sourceH = scene.imageElement.naturalHeight || height;
     } else {
       sourceDrawable = generateProceduralBackground(
         scene.lut_style,
@@ -137,20 +153,20 @@ export class CanvasRenderer {
     ctx.translate(width / 2 + offsetX, height / 2 + offsetY);
     ctx.scale(scale, scale);
 
-    // Maintain aspect ratio cover
+    // Maintain aspect ratio cover for both video and image sources
     let drawW = width;
     let drawH = height;
 
-    if (sourceDrawable instanceof HTMLImageElement && sourceDrawable.naturalWidth > 0) {
-      const imgAspect = sourceDrawable.naturalWidth / sourceDrawable.naturalHeight;
+    if (sourceW > 0 && sourceH > 0) {
+      const mediaAspect = sourceW / sourceH;
       const canvasAspect = width / height;
 
-      if (imgAspect > canvasAspect) {
+      if (mediaAspect > canvasAspect) {
         drawH = height;
-        drawW = height * imgAspect;
+        drawW = height * mediaAspect;
       } else {
         drawW = width;
-        drawH = width / imgAspect;
+        drawH = width / mediaAspect;
       }
     }
 

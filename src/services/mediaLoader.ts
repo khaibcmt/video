@@ -11,7 +11,17 @@ interface WikimediaImageResult {
   score: number;
 }
 
+interface WikimediaVideoResult {
+  url: string;
+  mime: string;
+  title: string;
+  width: number;
+  height: number;
+  score: number;
+}
+
 const imageCache = new Map<string, HTMLImageElement>();
+const videoCache = new Map<string, HTMLVideoElement>();
 const proceduralCache = new Map<string, HTMLCanvasElement>();
 
 // Detect static hosting environments (like GitHub Pages)
@@ -27,7 +37,7 @@ const isStaticHost =
  */
 const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
   // Animals & Fables (Truyện ngụ ngôn, cổ tích, thế giới động vật)
-  'rùa': 'tortoise turtle reptile nature',
+  'rùa': 'tortoise turtle nature',
   'con rùa': 'tortoise walking forest nature',
   'rùa biển': 'sea turtle swimming coral reef',
   'thỏ': 'wild rabbit hare meadow nature',
@@ -39,7 +49,7 @@ const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
   'khỉ': 'monkey macaque forest trees',
   'chim': 'bird flying tree branch nature',
   'đại bàng': 'eagle soaring mountain sky',
-  'cá heo': 'dolphin jumping ocean waves',
+  'cá heo': 'dolphin swimming ocean waves',
   'cá voi': 'whale deep blue ocean',
   'ong': 'honeybee flower pollination',
   'kiến': 'ants working leaf nature',
@@ -49,11 +59,11 @@ const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
   'cừu': 'sheep flock green hill',
   'sói': 'gray wolf forest nature',
   'rắn': 'snake reptile jungle',
-  'bướm': 'colorful butterfly flower garden',
+  'bướm': 'butterfly flower garden',
   'cò': 'white egret heron rice field',
 
   // Landscapes & Vietnam Heritage
-  'hạ long': 'Ha Long Bay limestone islands',
+  'hạ long': 'Ha Long Bay Vietnam aerial',
   'vịnh hạ long': 'Ha Long Bay limestone islands',
   'thiên cung': 'Thien Cung Cave stalactites',
   'sửng sốt': 'Sung Sot Cave Ha Long',
@@ -77,7 +87,7 @@ const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
   'tết': 'Lunar New Year peach blossom Vietnam',
   'trống đồng': 'Dong Son bronze drum Vietnam',
   'tơ lụa': 'Silk Road camel caravan desert',
-  'lạc đà': 'camel caravan Sahara desert dunes',
+  'lạc đà': 'camel caravan desert dunes',
   'sa mạc': 'sand dunes desert sunset',
   'hố đen': 'black hole accretion disk space',
   'vũ trụ': 'deep space galaxy nebula stars',
@@ -85,8 +95,8 @@ const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
   'mặt trời': 'Sun solar flare astronomy',
   'trái đất': 'Planet Earth from space',
   'mặt trăng': 'Full Moon craters astronomy',
-  'rừng': 'sunlight forest trees woodland path',
-  'khu rừng': 'green forest trees sunlight nature',
+  'rừng': 'sunlight forest trees nature',
+  'khu rừng': 'green forest trees nature',
   'biển': 'turquoise ocean waves coral reef',
   'đại dương': 'deep blue ocean marine life',
   'núi': 'majestic mountain peaks clouds',
@@ -175,8 +185,207 @@ function sanitizeSearchKeywords(raw: string): string {
 }
 
 /**
- * TIER 1: Generate an exact story-matched 16:9 image using Gemini Image Generation (server or direct REST)
- * Or Pollinations Flux 16:9 zero-key story synthesizer so any story/fable gets a 100% matching visual!
+ * TIER 0: Search Wikimedia Commons for REAL HD Video Footage (.webm / .mp4 / .ogv)
+ * matching the scene's subject so the scene renders live motion video!
+ */
+export async function searchWikimediaVideoFootage(
+  keyword: string,
+  narrationVi?: string,
+  usedUrls?: Set<string>
+): Promise<string | null> {
+  const tryVideoQuery = async (queryStr: string): Promise<string | null> => {
+    if (!queryStr || !queryStr.trim()) return null;
+    try {
+      const searchExpr = `${queryStr.trim()} filetype:video`;
+      const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
+        searchExpr
+      )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime|dimensions|size&gsrlimit=12&format=json&origin=*`;
+
+      const res = await fetch(endpoint, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const pages = data?.query?.pages;
+      if (!pages) return null;
+
+      const queryTokens = queryStr
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t.length > 2);
+
+      const candidates: WikimediaVideoResult[] = [];
+
+      Object.values(pages).forEach((page: any) => {
+        const info = page?.imageinfo?.[0];
+        if (!info || !info.url) return;
+
+        const mime = (info.mime || '').toLowerCase();
+        const url: string = info.url;
+        const title: string = (page.title || '').toLowerCase();
+        const width: number = info.width || 1280;
+        const height: number = info.height || 720;
+        const size: number = info.size || 0;
+
+        // Only accept browser-playable WebM or MP4 video streams under 38MB for fast loading
+        if (
+          !(
+            mime.includes('webm') ||
+            mime.includes('mp4') ||
+            url.endsWith('.webm') ||
+            url.endsWith('.mp4')
+          )
+        ) {
+          return;
+        }
+        if (size > 38_000_000) return;
+        if (width < 480 || height < 270) return;
+
+        // Exclude spoken interviews, animations of diagrams, maps, or logos
+        if (
+          title.includes('interview') ||
+          title.includes('speech') ||
+          title.includes('lecture') ||
+          title.includes('tutorial') ||
+          title.includes('screencast') ||
+          title.includes('diagram') ||
+          title.includes('map')
+        ) {
+          return;
+        }
+
+        let score = 0;
+        let matchedTokens = 0;
+        for (const token of queryTokens) {
+          if (title.includes(token)) {
+            matchedTokens++;
+            score += 20;
+          }
+        }
+        if (matchedTokens === 0) return;
+
+        const aspect = width / height;
+        if (aspect >= 1.25 && aspect <= 2.2) {
+          score += 30;
+        }
+
+        // Prefer compact fast-streaming HD clips (1MB - 18MB)
+        if (size > 500_000 && size < 18_000_000) {
+          score += 15;
+        }
+
+        if (usedUrls && usedUrls.has(url)) {
+          score -= 150;
+        }
+
+        candidates.push({
+          url,
+          mime,
+          title: page.title || '',
+          width,
+          height,
+          score,
+        });
+      });
+
+      const valid = candidates.filter((c) => c.score > 0);
+      if (valid.length === 0) return null;
+
+      valid.sort((a, b) => b.score - a.score);
+      const chosenUrl = valid[0].url;
+      if (usedUrls) usedUrls.add(chosenUrl);
+      return chosenUrl;
+    } catch {
+      return null;
+    }
+  };
+
+  const queries: string[] = [];
+  const mappedVi = extractVisualKeywordsFromVietnamese(narrationVi || '');
+  const cleanedEn = sanitizeSearchKeywords(keyword || '');
+
+  if (cleanedEn) {
+    const words = cleanedEn.split(' ');
+    if (words.length >= 2) {
+      queries.push(words.slice(0, 2).join(' '));
+    }
+    queries.push(cleanedEn);
+  }
+  if (mappedVi) {
+    const viWords = mappedVi.split(' ').slice(0, 2).join(' ');
+    if (viWords && !queries.includes(viWords)) {
+      queries.push(viWords);
+    }
+  }
+
+  for (const q of queries) {
+    const videoUrl = await tryVideoQuery(q);
+    if (videoUrl) return videoUrl;
+  }
+
+  return null;
+}
+
+/**
+ * Loads an HTML5 Video element ready for real-time 30fps Canvas rendering
+ */
+export function loadVideoWithFallback(
+  videoUrl: string,
+  timeoutMs: number = 9000
+): Promise<HTMLVideoElement> {
+  if (videoCache.has(videoUrl)) {
+    const cached = videoCache.get(videoUrl)!;
+    cached.play().catch(() => {});
+    return Promise.resolve(cached);
+  }
+
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+
+    let timer: any = null;
+    let triedProxy = false;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      video.onloadeddata = null;
+      video.onerror = null;
+    };
+
+    video.onloadeddata = () => {
+      cleanup();
+      video.play().catch(() => {});
+      videoCache.set(videoUrl, video);
+      resolve(video);
+    };
+
+    video.onerror = () => {
+      if (!triedProxy && !isStaticHost && !videoUrl.startsWith('blob:')) {
+        triedProxy = true;
+        video.src = `/api/proxy-video?url=${encodeURIComponent(videoUrl)}`;
+        video.load();
+        return;
+      }
+      cleanup();
+      reject(new Error(`Failed to load video footage: ${videoUrl}`));
+    };
+
+    timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Video load timed out: ${videoUrl}`));
+    }, timeoutMs);
+
+    video.src = videoUrl;
+    video.load();
+  });
+}
+
+/**
+ * TIER 1: Generate an exact story-matched 16:9 image using Gemini Image Generation
  */
 export async function generateStorySceneImage(
   visualPromptEn: string,
@@ -186,7 +395,6 @@ export async function generateStorySceneImage(
 
   const apiKey = keyRotationEngine.getNextActiveKey();
 
-  // 1A. Try Gemini 3.1 Flash Lite Image via backend or direct REST if API key is available
   if (apiKey || !isStaticHost) {
     try {
       if (isStaticHost && apiKey) {
@@ -237,7 +445,7 @@ export async function generateStorySceneImage(
         }
       }
     } catch {
-      // Fall through to Wikipedia / Wikimedia / Pollinations
+      // Fall through
     }
   }
 
@@ -246,7 +454,6 @@ export async function generateStorySceneImage(
 
 /**
  * TIER 2: Wikipedia Lead Article Image Search (en.wikipedia.org + vi.wikipedia.org)
- * Wikipedia articles are curated by humans so the main pageimage for a topic is 100% relevant!
  */
 export async function searchWikipediaLeadImage(
   topicOrQuery: string,
@@ -270,7 +477,6 @@ export async function searchWikipediaLeadImage(
     const pages = data?.query?.pages;
     if (!pages) return null;
 
-    // Sort by Wikipedia search index (1 = best article match)
     const sortedPages = Object.values(pages).sort(
       (a: any, b: any) => (a.index || 99) - (b.index || 99)
     );
@@ -351,7 +557,6 @@ export async function searchWikimediaCommons(
         const width: number = info.width || 1280;
         const height: number = info.height || 720;
 
-        // Reject non-photo files, scanned book pages, PDFs/djvu thumbnails, maps, logos, icons
         if (
           url.endsWith('.svg') ||
           url.endsWith('.tif') ||
@@ -389,7 +594,6 @@ export async function searchWikimediaCommons(
 
         let score = 0;
 
-        // Require at least one query token in the title to avoid random unrelated photos
         let matchedTokensCount = 0;
         for (const token of queryTokens) {
           if (title.includes(token)) {
@@ -536,14 +740,9 @@ export function loadImageWithFallback(
 }
 
 /**
- * Master Multi-Tier Visual Resolver:
- * Guarantees every scene image is homologous (đồng cấu) and directly depicts the story/content!
- *
- * Order of resolution:
- * 1. Gemini AI 16:9 Scene Image Generation (if visualPromptEn is available & API responds)
- * 2. Curated Wikipedia Article Lead Image (English Wikipedia -> Vietnamese Wikipedia)
- * 3. Strict Wikimedia Commons Photograph Search (filtered for landscape photos & title match)
- * 4. Pollinations AI 16:9 Story Illustration Generator (zero-key direct image synthesis for custom stories/fables)
+ * Master Multi-Tier Homologous Video & Visual Resolver:
+ * Prioritizes real HD video footage (cảnh quay thật) when available,
+ * combined with AI 16:9 story scenes, Wikipedia Lead Images, and Wikimedia photographs!
  */
 export async function fetchVerifiedSceneMedia(
   keywordsEn: string,
@@ -551,18 +750,42 @@ export async function fetchVerifiedSceneMedia(
   usedUrls?: Set<string>,
   visualPromptEn?: string,
   wikipediaTopicEn?: string,
-  sceneId: number = 1
+  sceneId: number = 1,
+  preferRealVideo: boolean = true
 ): Promise<{
-  imageUrl: string;
-  imageElement: HTMLImageElement;
-  sourceType: 'ai' | 'wikipedia' | 'wikimedia';
+  videoUrl?: string;
+  videoElement?: HTMLVideoElement;
+  imageUrl?: string;
+  imageElement?: HTMLImageElement;
+  sourceType: 'video' | 'ai' | 'wikipedia' | 'wikimedia';
 } | null> {
+  // 0. First attempt: Real HD Video Footage (.webm / .mp4) from Wikimedia Commons
+  if (preferRealVideo) {
+    const realVideoUrl = await searchWikimediaVideoFootage(
+      wikipediaTopicEn || keywordsEn,
+      narrationVi,
+      usedUrls
+    );
+    if (realVideoUrl) {
+      try {
+        const videoEl = await loadVideoWithFallback(realVideoUrl, 8500);
+        return {
+          videoUrl: realVideoUrl,
+          videoElement: videoEl,
+          sourceType: 'video',
+        };
+      } catch {
+        // If video stream fails to decode, continue seamlessly to image/AI tiers
+      }
+    }
+  }
+
   const effectivePrompt =
     visualPromptEn ||
     extractVisualKeywordsFromVietnamese(narrationVi || '') ||
     keywordsEn;
 
-  // 1. Try Gemini AI Scene Image Generation first for 100% story fidelity
+  // 1. Try Gemini AI Scene Image Generation for 100% story fidelity
   if (effectivePrompt) {
     const geminiImgUrl = await generateStorySceneImage(effectivePrompt, sceneId);
     if (geminiImgUrl) {
@@ -604,7 +827,7 @@ export async function fetchVerifiedSceneMedia(
     }
   }
 
-  // 4. Try Vietnamese Wikipedia Lead Image using key phrase from narration
+  // 4. Try Vietnamese Wikipedia Lead Image
   if (narrationVi) {
     const viWords = narrationVi
       .replace(/[.,;!?()"]/g, '')
@@ -622,7 +845,7 @@ export async function fetchVerifiedSceneMedia(
     }
   }
 
-  // 5. Try Zero-Key AI Story Visual Synthesizer (1280x720 16:9) for fables/stories not on Wikipedia
+  // 5. Try Zero-Key AI Story Visual Synthesizer (1280x720 16:9)
   if (effectivePrompt) {
     try {
       const cleanPrompt = encodeURIComponent(

@@ -87,6 +87,38 @@ async function startServer() {
     }
   });
 
+  // Video Proxy for Wikimedia Commons real video footage (.webm / .mp4 / .ogv)
+  app.get('/api/proxy-video', async (req, res) => {
+    const videoUrl = req.query.url as string;
+    if (!videoUrl) {
+      res.status(400).json({ error: 'Missing url parameter' });
+      return;
+    }
+
+    try {
+      const response = await fetch(videoUrl, {
+        headers: {
+          'User-Agent': 'VietVideoStudio/2.0 (Pro Documentary Video Engine; contact@example.com)',
+        },
+      });
+
+      if (!response.ok) {
+        res.status(response.status).json({ error: 'Failed to fetch video upstream' });
+        return;
+      }
+
+      const contentType = response.headers.get('content-type') || 'video/webm';
+      const buffer = await response.arrayBuffer();
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.send(Buffer.from(buffer));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Video proxy failed' });
+    }
+  });
+
   // Gemini API Endpoint with Multi-Key Support and structured JSON
   app.post('/api/gemini/generate', async (req, res) => {
     const { apiKey, model = 'gemini-3.8-flash', thinkingLevel, prompt, targetDurationSec = 60 } = req.body;

@@ -17,11 +17,14 @@ export interface Scene {
   camera_motion: CameraMotion;
   lut_style: LutStyle;
   duration_seconds: number;
+  videoUrl?: string;
+  videoElement?: HTMLVideoElement | null;
+  videoLoaded?: boolean;
   imageUrl?: string;
   imageElement?: HTMLImageElement | null;
   imageLoaded?: boolean;
   imageFailed?: boolean;
-  imageSourceType?: 'ai' | 'wikipedia' | 'wikimedia' | 'procedural';
+  imageSourceType?: 'video' | 'ai' | 'wikipedia' | 'wikimedia' | 'procedural';
   audioBlobUrl?: string;
   audioDuration?: number;
 }

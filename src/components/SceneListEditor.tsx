@@ -61,7 +61,9 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
     try {
       const scene = scenes[index];
       const usedUrls = new Set<string>(
-        scenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u))
+        scenes
+          .map((s) => s.videoUrl || s.imageUrl)
+          .filter((u): u is string => Boolean(u))
       );
       const media = await fetchVerifiedSceneMedia(
         keywords,
@@ -69,18 +71,23 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
         usedUrls,
         scene?.visual_prompt_en,
         scene?.wikipedia_topic_en,
-        (scene?.scene_id || index + 1) + Math.floor(Math.random() * 50)
+        (scene?.scene_id || index + 1) + Math.floor(Math.random() * 50),
+        true
       );
       if (media) {
         onUpdateScene(index, {
+          videoUrl: media.videoUrl,
+          videoElement: media.videoElement || null,
+          videoLoaded: Boolean(media.videoElement),
           imageUrl: media.imageUrl,
-          imageElement: media.imageElement,
-          imageLoaded: true,
+          imageElement: media.imageElement || null,
+          imageLoaded: Boolean(media.imageElement),
           imageFailed: false,
           imageSourceType: media.sourceType,
         });
       } else {
         onUpdateScene(index, {
+          videoLoaded: false,
           imageLoaded: false,
           imageFailed: true,
           imageSourceType: 'procedural',
@@ -88,6 +95,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
       }
     } catch {
       onUpdateScene(index, {
+        videoLoaded: false,
         imageLoaded: false,
         imageFailed: true,
         imageSourceType: 'procedural',
@@ -109,6 +117,9 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
       if (aiUrl) {
         const img = await loadImageWithFallback(aiUrl, 9000);
         onUpdateScene(index, {
+          videoUrl: undefined,
+          videoElement: null,
+          videoLoaded: false,
           imageUrl: aiUrl,
           imageElement: img,
           imageLoaded: true,
@@ -125,6 +136,9 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
       const streamUrl = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=1280&height=720&nologo=true&seed=${seed}`;
       const img = await loadImageWithFallback(streamUrl, 9000);
       onUpdateScene(index, {
+        videoUrl: undefined,
+        videoElement: null,
+        videoLoaded: false,
         imageUrl: streamUrl,
         imageElement: img,
         imageLoaded: true,
@@ -136,12 +150,35 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
     }
   };
 
-  const handleCustomImageUpload = (
+  const handleCustomMediaUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
     index: number
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.type.startsWith('video/')) {
+      const blobUrl = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.preload = 'auto';
+      video.onloadeddata = () => {
+        video.play().catch(() => {});
+        onUpdateScene(index, {
+          videoUrl: blobUrl,
+          videoElement: video,
+          videoLoaded: true,
+          imageSourceType: 'video',
+          imageFailed: false,
+        });
+      };
+      video.src = blobUrl;
+      video.load();
+      e.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -149,6 +186,9 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
       const img = new Image();
       img.onload = () => {
         onUpdateScene(index, {
+          videoUrl: undefined,
+          videoElement: null,
+          videoLoaded: false,
           imageUrl: dataUrl,
           imageElement: img,
           imageLoaded: true,
@@ -168,15 +208,15 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4">
-      {/* Hidden File Input for Image Upload */}
+      {/* Hidden File Input for Video (.mp4/.webm) or Image Upload */}
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="video/mp4,video/webm,image/*"
         className="hidden"
         onChange={(e) => {
           if (activeUploadIndexRef.current !== null) {
-            handleCustomImageUpload(e, activeUploadIndexRef.current);
+            handleCustomMediaUpload(e, activeUploadIndexRef.current);
           }
         }}
       />
@@ -307,9 +347,18 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
 
               {/* Main Content Row: Thumbnail & Controls */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-                {/* Thumbnail Preview */}
+                {/* Thumbnail Preview (Real Video Clip or Image) */}
                 <div className="relative aspect-video rounded-lg overflow-hidden bg-slate-900 border border-slate-800 flex items-center justify-center group/thumb">
-                  {scene.imageUrl && scene.imageLoaded ? (
+                  {scene.videoUrl && scene.videoLoaded ? (
+                    <video
+                      src={scene.videoUrl}
+                      muted
+                      loop
+                      autoPlay
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  ) : scene.imageUrl && scene.imageLoaded ? (
                     <img
                       src={scene.imageUrl}
                       alt={scene.title}
@@ -324,6 +373,18 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                     </div>
                   )}
 
+                  {/* Source Badge on Thumbnail */}
+                  {scene.imageSourceType === 'video' && (
+                    <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-emerald-500/90 text-slate-950 font-bold text-[9px] uppercase tracking-wider shadow">
+                      🎬 Video Thật
+                    </span>
+                  )}
+                  {scene.imageSourceType === 'ai' && (
+                    <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-amber-500/90 text-slate-950 font-bold text-[9px] uppercase tracking-wider shadow">
+                      ✨ Cảnh AI
+                    </span>
+                  )}
+
                   {/* Thumbnail Overlay Buttons */}
                   <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center gap-1.5 p-1">
                     <button
@@ -333,7 +394,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                         handleGenerateAiSceneImage(idx);
                       }}
                       className="p-1.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-slate-950 text-[10px] font-bold flex items-center gap-1"
-                      title="Vẽ ảnh AI 16:9 đồng cấu 100% nội dung câu chuyện của cảnh này"
+                      title="Vẽ cảnh AI 16:9 đồng cấu 100% nội dung câu chuyện"
                     >
                       <Sparkles className="w-3 h-3" />
                       <span>AI</span>
@@ -345,7 +406,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                         handleRefetchImage(idx, scene.search_keywords_en);
                       }}
                       className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1"
-                      title="Tìm ảnh Wikipedia / Wikimedia Commons"
+                      title="Tìm cảnh quay video thật (.webm/.mp4) hoặc ảnh Wikipedia"
                     >
                       <Search className="w-3 h-3 text-amber-400" />
                     </button>
@@ -356,7 +417,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                         triggerUpload(idx);
                       }}
                       className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1"
-                      title="Tải ảnh tùy chỉnh từ máy tính"
+                      title="Tải video (.mp4/.webm) hoặc ảnh từ máy tính"
                     >
                       <Upload className="w-3 h-3 text-cyan-400" />
                     </button>

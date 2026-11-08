@@ -114,9 +114,12 @@ export default function App() {
             if (copy[index] && copy[index].scene_id === scene.scene_id) {
               copy[index] = {
                 ...copy[index],
+                videoUrl: media.videoUrl,
+                videoElement: media.videoElement || null,
+                videoLoaded: Boolean(media.videoElement),
                 imageUrl: media.imageUrl,
-                imageElement: media.imageElement,
-                imageLoaded: true,
+                imageElement: media.imageElement || null,
+                imageLoaded: Boolean(media.imageElement),
                 imageFailed: false,
                 imageSourceType: media.sourceType,
               };
