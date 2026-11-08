@@ -19,11 +19,28 @@ class AudioEngine {
 
   // Active voiceover source
   private activeVoiceSource: AudioBufferSourceNode | null = null;
+  private activeHtmlAudio: HTMLAudioElement | null = null;
   private isVoiceoverPlaying: boolean = false;
   private isDucked: boolean = false;
 
+  // Speech synthesis cached voices
+  private speechVoices: SpeechSynthesisVoice[] = [];
+
   // Listeners
   private duckingListeners: Set<DuckingListener> = new Set();
+
+  constructor() {
+    this.initSpeechVoices();
+  }
+
+  private initSpeechVoices(): void {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      this.speechVoices = window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => {
+        this.speechVoices = window.speechSynthesis.getVoices();
+      };
+    }
+  }
 
   public subscribeDucking(listener: DuckingListener): () => void {
     this.duckingListeners.add(listener);
@@ -110,9 +127,6 @@ class AudioEngine {
     this.notifyDucking(false, 0.25);
   }
 
-  /**
-   * Sets custom volume levels
-   */
   public setMusicBaseVolume(vol: number): void {
     if (this.musicGain && this.audioCtx && !this.isDucked) {
       this.musicGain.gain.setValueAtTime(vol, this.audioCtx.currentTime);
@@ -189,7 +203,6 @@ class AudioEngine {
         osc.type = idx === 0 ? 'sine' : 'triangle';
         osc.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
 
-        // Subtle slow pitch drift for analog character
         const detune = (idx * 2 - 2) + Math.sin(Date.now() / 1000) * 1.5;
         osc.detune.setValueAtTime(detune, this.audioCtx.currentTime);
 
@@ -260,40 +273,135 @@ class AudioEngine {
   }
 
   /**
-   * Fetches Google TTS Vietnamese audio as an AudioBuffer
+   * Fetches Google TTS Vietnamese audio as an AudioBuffer (when Node.js proxy is available)
    */
   public async fetchGoogleTtsBuffer(text: string): Promise<AudioBuffer | null> {
-    const ctx = await this.ensureContext();
-    const cleanText = text.slice(0, 190);
+    // Only attempt if not on static GitHub Pages
+    const isStatic =
+      typeof window !== 'undefined' &&
+      (window.location.hostname.includes('github.io') ||
+        (window.location.port !== '3000' && !window.location.hostname.includes('run.app')));
 
-    const tryFetch = async (url: string) => {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`TTS status ${res.status}`);
-      const arrayBuffer = await res.arrayBuffer();
-      return await ctx.decodeAudioData(arrayBuffer);
-    };
+    if (isStatic) return null;
 
     try {
-      // Primary: backend proxy with anti-CORS headers
-      return await tryFetch(`/api/tts?text=${encodeURIComponent(cleanText)}`);
-    } catch (err) {
-      console.warn('Backend TTS failed, trying direct Google TTS URL...', err);
-      try {
-        const directUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
-          cleanText
-        )}&tl=vi&client=gtx`;
-        return await tryFetch(directUrl);
-      } catch (directErr) {
-        console.warn('Direct Google TTS also failed:', directErr);
-        return null;
+      const ctx = await this.ensureContext();
+      const cleanText = text.slice(0, 190);
+      const res = await fetch(`/api/tts?text=${encodeURIComponent(cleanText)}`);
+      if (!res.ok) return null;
+      const arrayBuffer = await res.arrayBuffer();
+      return await ctx.decodeAudioData(arrayBuffer);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Plays Vietnamese Google TTS via HTML5 Audio element
+   * Works on GitHub Pages without CORS restrictions when <meta name="referrer" content="no-referrer"> is present!
+   */
+  private playGoogleTtsElement(text: string, onEnded?: () => void): boolean {
+    try {
+      const cleanText = text.slice(0, 195);
+      const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
+        cleanText
+      )}&tl=vi&client=gtx`;
+
+      const audio = new Audio();
+      this.activeHtmlAudio = audio;
+
+      let finished = false;
+      const handleDone = () => {
+        if (!finished) {
+          finished = true;
+          this.activeHtmlAudio = null;
+          this.restoreMusic();
+          onEnded?.();
+        }
+      };
+
+      audio.onplay = () => {
+        this.duckMusic();
+      };
+
+      audio.onended = handleDone;
+      audio.onerror = () => {
+        // Fallback to Web Speech API
+        this.fallbackWebSpeech(text, onEnded);
+      };
+
+      audio.src = url;
+      audio.play().catch(() => {
+        this.fallbackWebSpeech(text, onEnded);
+      });
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Fallback Web Speech API with strict Vietnamese check
+   */
+  private fallbackWebSpeech(normalizedText: string, onEnded?: () => void): void {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(normalizedText);
+      utterance.lang = 'vi-VN';
+      utterance.rate = 0.95;
+
+      const voices = this.speechVoices.length > 0 ? this.speechVoices : window.speechSynthesis.getVoices();
+      const vietnameseVoice = voices.find(
+        (v) =>
+          v.lang.toLowerCase().startsWith('vi') ||
+          v.lang.toLowerCase().includes('vn') ||
+          v.name.toLowerCase().includes('vietnam')
+      );
+
+      // CRITICAL REQUIREMENT: Strictly disallow English voice reading Vietnamese!
+      if (vietnameseVoice) {
+        utterance.voice = vietnameseVoice;
+      } else if (voices.length > 0 && !voices.some((v) => v.lang.toLowerCase().startsWith('vi'))) {
+        console.warn('No Vietnamese TTS voice found on system. Muting speech to avoid English voice reciting Vietnamese.');
+        const wordCount = normalizedText.split(/\s+/).length;
+        const durationMs = Math.max(3000, (wordCount / 3.25) * 1000);
+        setTimeout(() => {
+          this.restoreMusic();
+          onEnded?.();
+        }, durationMs);
+        return;
       }
+
+      this.duckMusic();
+
+      utterance.onend = () => {
+        this.restoreMusic();
+        onEnded?.();
+      };
+
+      utterance.onerror = () => {
+        this.restoreMusic();
+        onEnded?.();
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } else {
+      const wordCount = normalizedText.split(/\s+/).length;
+      const durationMs = Math.max(3000, (wordCount / 3.25) * 1000);
+      setTimeout(() => {
+        this.restoreMusic();
+        onEnded?.();
+      }, durationMs);
     }
   }
 
   /**
    * Plays Vietnamese voiceover with ducking:
-   * 1. First tries Google TTS AudioBuffer.
-   * 2. If fails, uses Web Speech API strictly locked to Vietnamese voice (`vi-VN`).
+   * 1. If AudioBuffer is available (Node.js server), plays via Web Audio source.
+   * 2. If on GitHub Pages, plays via Google TTS HTML5 Audio element.
+   * 3. Falls back to Web Speech API with strict Vietnamese filter.
    */
   public async playVietnameseNarration(
     normalizedText: string,
@@ -303,18 +411,11 @@ class AudioEngine {
     this.stopVoiceover();
 
     this.isVoiceoverPlaying = true;
-    this.duckMusic();
 
-    const handleFinished = () => {
-      this.isVoiceoverPlaying = false;
-      this.restoreMusic();
-      onEnded?.();
-    };
-
-    // Attempt Google TTS AudioBuffer
+    // 1. First attempt AudioBuffer via server proxy
     const audioBuffer = await this.fetchGoogleTtsBuffer(normalizedText);
-
     if (audioBuffer && this.voiceGain) {
+      this.duckMusic();
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(this.voiceGain);
@@ -323,7 +424,9 @@ class AudioEngine {
       source.onended = () => {
         if (this.activeVoiceSource === source) {
           this.activeVoiceSource = null;
-          handleFinished();
+          this.isVoiceoverPlaying = false;
+          this.restoreMusic();
+          onEnded?.();
         }
       };
 
@@ -331,48 +434,17 @@ class AudioEngine {
       return;
     }
 
-    // Fallback: Web Speech API with strict Vietnamese check
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+    // 2. Play via direct Google TTS Audio Element (100% works on GitHub Pages without CORS!)
+    const elementPlayed = this.playGoogleTtsElement(normalizedText, () => {
+      this.isVoiceoverPlaying = false;
+      onEnded?.();
+    });
 
-      const utterance = new SpeechSynthesisUtterance(normalizedText);
-      utterance.lang = 'vi-VN';
-      utterance.rate = 0.95;
-
-      const voices = window.speechSynthesis.getVoices();
-      const vietnameseVoice = voices.find(
-        (v) =>
-          v.lang.toLowerCase().includes('vi') ||
-          v.lang.toLowerCase().includes('vn') ||
-          v.name.toLowerCase().includes('vietnam')
-      );
-
-      // CRITICAL REQUIREMENT: Strictly disallow English voice reading Vietnamese!
-      if (vietnameseVoice) {
-        utterance.voice = vietnameseVoice;
-      } else if (voices.length > 0 && !voices.some((v) => v.lang.toLowerCase().includes('vi'))) {
-        console.warn('No Vietnamese TTS voice found on system. Muting speech to avoid English voice reciting Vietnamese.');
-        // Wait simulated duration then finish
-        const wordCount = normalizedText.split(/\s+/).length;
-        const durationMs = Math.max(3000, (wordCount / 3.25) * 1000);
-        setTimeout(handleFinished, durationMs);
-        return;
-      }
-
-      utterance.onend = () => {
-        handleFinished();
-      };
-
-      utterance.onerror = () => {
-        handleFinished();
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } else {
-      // Simulate duration
-      const wordCount = normalizedText.split(/\s+/).length;
-      const durationMs = Math.max(3000, (wordCount / 3.25) * 1000);
-      setTimeout(handleFinished, durationMs);
+    if (!elementPlayed) {
+      this.fallbackWebSpeech(normalizedText, () => {
+        this.isVoiceoverPlaying = false;
+        onEnded?.();
+      });
     }
   }
 
@@ -385,6 +457,14 @@ class AudioEngine {
       this.activeVoiceSource = null;
     }
 
+    if (this.activeHtmlAudio) {
+      try {
+        this.activeHtmlAudio.pause();
+        this.activeHtmlAudio.src = '';
+      } catch {}
+      this.activeHtmlAudio = null;
+    }
+
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -395,9 +475,6 @@ class AudioEngine {
     }
   }
 
-  /**
-   * Complete reset: stops all voice, music, synthesizers
-   */
   public stopAll(): void {
     this.stopVoiceover();
     this.stopBackgroundMusic();

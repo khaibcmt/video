@@ -5,7 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: '/video/', // Bắt buộc để nhận đúng đường dẫn trên GitHub Pages
+    base: './',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

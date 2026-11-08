@@ -2,6 +2,7 @@ import { LutStyle } from '../types';
 
 interface WikimediaImageResult {
   url: string;
+  thumbUrl: string;
   mime: string;
   title: string;
 }
@@ -9,8 +10,16 @@ interface WikimediaImageResult {
 const imageCache = new Map<string, HTMLImageElement>();
 const proceduralCache = new Map<string, HTMLCanvasElement>();
 
+// Detect static hosting environments (like GitHub Pages)
+const isStaticHost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname.includes('github.io') ||
+    window.location.protocol === 'file:' ||
+    (window.location.port !== '3000' && !window.location.hostname.includes('run.app')));
+
 /**
  * Searches Wikimedia Commons for royalty-free images matching the keywords
+ * Uses iiurlwidth=1280 to retrieve lightweight 1280px thumbnails directly from Wikimedia CDN
  */
 export async function searchWikimediaCommons(keyword: string): Promise<string | null> {
   if (!keyword || !keyword.trim()) return null;
@@ -25,7 +34,7 @@ export async function searchWikimediaCommons(keyword: string): Promise<string | 
 
     const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
       cleanKeyword
-    )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&gsrlimit=8&format=json&origin=*`;
+    )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=1280&gsrlimit=8&format=json&origin=*`;
 
     const res = await fetch(endpoint, {
       headers: {
@@ -43,19 +52,23 @@ export async function searchWikimediaCommons(keyword: string): Promise<string | 
 
     Object.values(pages).forEach((page: any) => {
       const info = page?.imageinfo?.[0];
-      if (info && info.url && info.mime) {
-        const mime = info.mime.toLowerCase();
-        const url = info.url;
+      if (info && (info.thumburl || info.url)) {
+        const mime = (info.mime || '').toLowerCase();
+        const url = info.thumburl || info.url;
+
         // Filter out svgs, tiffs, pdfs, audio/video
         if (
-          (mime.includes('jpeg') || mime.includes('png') || mime.includes('webp')) &&
           !url.endsWith('.svg') &&
           !url.endsWith('.tif') &&
-          !url.endsWith('.tiff')
+          !url.endsWith('.tiff') &&
+          !url.endsWith('.ogg') &&
+          !url.endsWith('.pdf') &&
+          (mime.includes('jpeg') || mime.includes('jpg') || mime.includes('png') || mime.includes('webp') || url.includes('.jpg') || url.includes('.png'))
         ) {
           validImages.push({
             url: info.url,
-            mime: info.mime,
+            thumbUrl: info.thumburl || info.url,
+            mime: info.mime || 'image/jpeg',
             title: page.title || '',
           });
         }
@@ -63,8 +76,8 @@ export async function searchWikimediaCommons(keyword: string): Promise<string | 
     });
 
     if (validImages.length > 0) {
-      // Pick first or random high quality
-      return validImages[0].url;
+      // Pick best resolution thumbUrl
+      return validImages[0].thumbUrl || validImages[0].url;
     }
 
     return null;
@@ -76,11 +89,11 @@ export async function searchWikimediaCommons(keyword: string): Promise<string | 
 
 /**
  * Loads an image from URL with CORS anonymous and caching.
- * Falls back to proxy or null if failed.
+ * On static hosts (GitHub Pages), skips failing local proxy calls and falls back cleanly.
  */
 export function loadImageWithFallback(
   imageUrl: string,
-  timeoutMs: number = 7000
+  timeoutMs: number = 6000
 ): Promise<HTMLImageElement> {
   if (imageCache.has(imageUrl)) {
     return Promise.resolve(imageCache.get(imageUrl)!);
@@ -106,21 +119,26 @@ export function loadImageWithFallback(
 
     img.onerror = () => {
       cleanup();
-      // Try local proxy if running on fullstack server
-      const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
-      const proxyImg = new Image();
-      proxyImg.crossOrigin = 'anonymous';
 
-      proxyImg.onload = () => {
-        imageCache.set(imageUrl, proxyImg);
-        resolve(proxyImg);
-      };
+      // Only attempt local proxy if running on fullstack Node.js server (not GitHub Pages)
+      if (!isStaticHost) {
+        const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+        const proxyImg = new Image();
+        proxyImg.crossOrigin = 'anonymous';
 
-      proxyImg.onerror = () => {
-        reject(new Error(`Failed to load image: ${imageUrl}`));
-      };
+        proxyImg.onload = () => {
+          imageCache.set(imageUrl, proxyImg);
+          resolve(proxyImg);
+        };
 
-      proxyImg.src = proxyUrl;
+        proxyImg.onerror = () => {
+          reject(new Error(`Failed to load image: ${imageUrl}`));
+        };
+
+        proxyImg.src = proxyUrl;
+      } else {
+        reject(new Error(`CORS blocked or image not found: ${imageUrl}`));
+      }
     };
 
     timer = setTimeout(() => {

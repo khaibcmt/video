@@ -1,5 +1,6 @@
 import { Scene, ThinkingLevelOption } from '../types';
 import { keyRotationEngine } from './keyRotation';
+import { matchSamplePreset } from './sampleData';
 
 export function calculateSceneDuration(narrationNormalized: string): number {
   if (!narrationNormalized) return 5;
@@ -46,6 +47,17 @@ export interface AnalyzeScriptParams {
   onStatusUpdate?: (status: string) => void;
 }
 
+// Check if running on static host (GitHub Pages, Vercel static, etc.)
+export function isStaticEnvironment(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return (
+    host.includes('github.io') ||
+    window.location.protocol === 'file:' ||
+    (window.location.port !== '3000' && !host.includes('run.app'))
+  );
+}
+
 export async function analyzeScript({
   script,
   model,
@@ -56,11 +68,42 @@ export async function analyzeScript({
     throw new Error('Vui lòng nhập nội dung kịch bản hoặc chọn kịch bản mẫu.');
   }
 
+  const isStatic = isStaticEnvironment();
+  const keysCount = keyRotationEngine.getTotalKeysCount();
+
+  // If on GitHub Pages and user has not configured any API keys yet:
+  // Check if it matches a preset sample script to provide an instant working demo!
+  if (isStatic && keysCount === 0) {
+    const preset = matchSamplePreset(script);
+    if (preset) {
+      onStatusUpdate?.('Đang nạp phân cảnh chuẩn mẫu (Chế độ Demo GitHub Pages)...');
+      return preset.map((s) => ({
+        ...s,
+        duration_seconds: calculateSceneDuration(s.narration_normalized),
+      }));
+    } else {
+      throw new Error(
+        'Bạn đang chạy trên GitHub Pages (Web Tĩnh). Vui lòng nhấn vào nút "🔑 Keys" ở góc trên để dán ít nhất 1 Gemini API Key của bạn để phân tích kịch bản mới này.'
+      );
+    }
+  }
+
   onStatusUpdate?.('Đang gửi kịch bản vào Gemini API với cơ chế xoay vòng key...');
 
   return await keyRotationEngine.executeWithRotation(async (apiKey) => {
+    // If running on static host (GitHub Pages), call Google Generative Language REST API directly!
+    if (isStatic) {
+      if (!apiKey) {
+        const preset = matchSamplePreset(script);
+        if (preset) return preset;
+        throw new Error('Vui lòng nhập Gemini API Key vào mục Quản Lý Keys trên GitHub Pages.');
+      }
+      onStatusUpdate?.('Đang gọi trực tiếp Gemini REST API (GitHub Pages Mode)...');
+      return await callGeminiDirectRest(script, model, thinkingLevel, apiKey);
+    }
+
     try {
-      // First attempt: call local/fullstack backend proxy
+      // On fullstack Node.js server, call local backend proxy
       const response = await fetch('/api/gemini/generate', {
         method: 'POST',
         headers: {
@@ -108,10 +151,9 @@ export async function analyzeScript({
 
       return processedScenes;
     } catch (err: any) {
-      // Check if this was a 404 on /api/gemini/generate (e.g. running statically on GitHub Pages)
-      // If running on static host with client API key, fallback to direct Google Generative AI REST API!
-      if (err.status === 404 && apiKey) {
-        onStatusUpdate?.('Đang chuyển hướng gọi trực tiếp Gemini REST API (Chế độ GitHub Pages)...');
+      // Fallback for static hosts or direct client REST
+      if ((err.status === 404 || err.message?.includes('404')) && apiKey) {
+        onStatusUpdate?.('Đang chuyển hướng gọi trực tiếp Gemini REST API...');
         return await callGeminiDirectRest(script, model, thinkingLevel, apiKey);
       }
       throw err;
@@ -120,7 +162,7 @@ export async function analyzeScript({
 }
 
 /**
- * Direct REST API fallback for GitHub Pages hosting
+ * Direct REST API for GitHub Pages hosting with responseSchema structured JSON
  */
 async function callGeminiDirectRest(
   prompt: string,

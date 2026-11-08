@@ -129,10 +129,14 @@ export default function App() {
       loadMediaForScenes(generatedScenes);
     } catch (err: any) {
       console.error('Script analysis error:', err);
-      alert(
-        err.message ||
-          'Không thể phân tích kịch bản. Vui lòng kiểm tra lại API Key hoặc kịch bản nhập vào.'
-      );
+      const errMsg = err?.message || 'Không thể phân tích kịch bản.';
+      
+      // If error indicates missing API key on GitHub Pages, open Key Manager modal
+      if (errMsg.includes('API Key') || errMsg.includes('Quản Lý Keys')) {
+        setIsKeyManagerOpen(true);
+      }
+      
+      alert(errMsg);
     } finally {
       setIsAnalyzing(false);
       setAnalysisStatus('');
