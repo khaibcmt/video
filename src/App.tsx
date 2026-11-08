@@ -12,45 +12,61 @@ import {
   scaleScenesToTargetDuration,
 } from './services/scriptAnalyzer';
 import { fetchVerifiedSceneMedia } from './services/mediaLoader';
+import { translateNarrationToVideoQueries } from './services/videoQueryTranslator';
 import { audioEngine } from './services/audioEngine';
 
-// Default initial scenes so the application opens immediately ready to play with no blank screen!
+// Default initial scenes with pre-populated real MP4/WebM video candidate pools!
 const INITIAL_SCENES: Scene[] = [
   {
     scene_id: 1,
     title: 'Kỳ Quan Vịnh Hạ Long',
     narration_vi: 'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn 1.600 hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích 1.553 km2.',
     narration_normalized: 'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn một nghìn sáu trăm hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích một nghìn năm trăm năm mươi ba ki-lô-mét vuông.',
-    search_keywords_en: 'Ha Long Bay limestone cliffs vietnam',
+    search_keywords_en: 'Ha Long Bay Vietnam aerial boat',
     visual_prompt_en: 'Cinematic aerial view of Ha Long Bay Vietnam with emerald green water and towering limestone karst islands under golden morning sunlight',
     wikipedia_topic_en: 'Hạ Long Bay',
     camera_motion: 'zoom-in',
     lut_style: 'cinematic-teal-orange',
     duration_seconds: 10,
+    videoUrl: translateNarrationToVideoQueries('Vịnh Hạ Long').curatedVideoUrls[0],
+    videoCandidateUrls: translateNarrationToVideoQueries('Vịnh Hạ Long').curatedVideoUrls,
+    videoCandidateIndex: 0,
+    videoSourceLabel: '🎬 Video MP4/WebM (Wikimedia HD • Clip #1/6)',
+    imageSourceType: 'video',
   },
   {
     scene_id: 2,
     title: 'Hang Động Lung Linh',
     narration_vi: 'Trải qua hơn 500 triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn 120 mét sở hữu thạch nhũ huyền ảo.',
     narration_normalized: 'Trải qua hơn năm trăm triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn một trăm hai mươi mét sở hữu thạch nhũ huyền ảo.',
-    search_keywords_en: 'Sung Sot cave stalactite Ha Long',
+    search_keywords_en: 'cave stalactites cavern underground',
     visual_prompt_en: 'Inside Sung Sot Cave and Thien Cung Cave in Ha Long Bay illuminated with dramatic warm golden and colorful lights on giant limestone stalactites',
     wikipedia_topic_en: 'Sửng Sốt Cave',
     camera_motion: 'pan-right',
     lut_style: 'warm-golden',
     duration_seconds: 11,
+    videoUrl: translateNarrationToVideoQueries('hang Sửng Sốt thạch nhũ').curatedVideoUrls[0],
+    videoCandidateUrls: translateNarrationToVideoQueries('hang Sửng Sốt thạch nhũ').curatedVideoUrls,
+    videoCandidateIndex: 0,
+    videoSourceLabel: '🎬 Video MP4/WebM (Wikimedia HD • Clip #1/6)',
+    imageSourceType: 'video',
   },
   {
     scene_id: 3,
     title: 'Nhịp Sống Làng Chài',
     narration_vi: 'Mỗi năm, nơi đây đón hơn 4.000.000 lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.',
     narration_normalized: 'Mỗi năm, nơi đây đón hơn bốn triệu lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.',
-    search_keywords_en: 'Ha Long Bay floating fishing village emerald water',
+    search_keywords_en: 'fishing village boats emerald water',
     visual_prompt_en: 'Traditional floating fishing village in Ha Long Bay Vietnam with wooden boats on calm emerald water surrounded by karst mountains',
     wikipedia_topic_en: 'Cửa Vạn',
     camera_motion: 'zoom-out',
     lut_style: 'natural-documentary',
     duration_seconds: 11,
+    videoUrl: translateNarrationToVideoQueries('làng chài thuyền').curatedVideoUrls[1],
+    videoCandidateUrls: translateNarrationToVideoQueries('làng chài thuyền').curatedVideoUrls,
+    videoCandidateIndex: 1,
+    videoSourceLabel: '🎬 Video MP4/WebM (Wikimedia HD • Clip #2/6)',
+    imageSourceType: 'video',
   },
 ];
 
@@ -70,91 +86,45 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
 
-  // Preload both relevant story-matched images (without duplicates) and fluent TTS audio buffers for scenes
+  // Preload distinct, homologous real motion video streams per scene in parallel
   const loadMediaForScenes = useCallback(async (scenesToLoad: Scene[]) => {
     const usedUrls = new Set<string>();
 
-    // 1. Pre-warm Vietnamese TTS AudioBuffers in parallel and adjust scene duration if audio is longer
-    audioEngine
-      .preloadNarrations(scenesToLoad.map((s) => s.narration_normalized))
-      .then((audioDurations) => {
-        setScenes((prev) => {
-          let changed = false;
-          const next = prev.map((sc, idx) => {
-            const actualSec = audioDurations[idx];
-            if (actualSec && Math.ceil(actualSec + 1.2) > sc.duration_seconds) {
-              changed = true;
-              return {
-                ...sc,
-                duration_seconds: Math.ceil(actualSec + 1.2),
-              };
-            }
-            return sc;
-          });
-          return changed ? next : prev;
-        });
-      })
-      .catch(() => {});
-
-    // 2. Sequentially resolve distinct, homologous images per scene (AI Story Image -> Wikipedia -> Wikimedia)
-    for (let index = 0; index < scenesToLoad.length; index++) {
-      const scene = scenesToLoad[index];
-      try {
-        const media = await fetchVerifiedSceneMedia(
-          scene.search_keywords_en,
-          scene.narration_vi,
-          usedUrls,
-          scene.visual_prompt_en,
-          scene.wikipedia_topic_en,
-          scene.scene_id || index + 1
-        );
-        if (media) {
-          setScenes((prev) => {
-            const copy = [...prev];
-            if (copy[index] && copy[index].scene_id === scene.scene_id) {
-              copy[index] = {
-                ...copy[index],
-                videoUrl: media.videoUrl,
-                videoElement: media.videoElement || null,
-                videoLoaded: Boolean(media.videoElement),
-                imageUrl: media.imageUrl,
-                imageElement: media.imageElement || null,
-                imageLoaded: Boolean(media.imageElement),
-                imageFailed: false,
-                imageSourceType: media.sourceType,
-              };
-            }
-            return copy;
-          });
-        } else {
-          setScenes((prev) => {
-            const copy = [...prev];
-            if (copy[index] && copy[index].scene_id === scene.scene_id) {
-              copy[index] = {
-                ...copy[index],
-                imageLoaded: false,
-                imageFailed: true,
-                imageSourceType: 'procedural',
-              };
-            }
-            return copy;
-          });
-        }
-      } catch {
-        setScenes((prev) => {
-          const copy = [...prev];
-          if (copy[index] && copy[index].scene_id === scene.scene_id) {
-            copy[index] = {
-              ...copy[index],
-              imageLoaded: false,
-              imageFailed: true,
-              imageSourceType: 'procedural',
-            };
+    await Promise.all(
+      scenesToLoad.map(async (scene, index) => {
+        try {
+          const media = await fetchVerifiedSceneMedia(
+            scene.search_keywords_en,
+            scene.narration_vi,
+            usedUrls,
+            scene.visual_prompt_en,
+            scene.wikipedia_topic_en,
+            scene.scene_id || index + 1,
+            index
+          );
+          if (media) {
+            setScenes((prev) => {
+              const copy = [...prev];
+              if (copy[index] && copy[index].scene_id === scene.scene_id) {
+                copy[index] = {
+                  ...copy[index],
+                  videoUrl: media.videoUrl,
+                  videoElement: media.videoElement,
+                  videoLoaded: true,
+                  videoCandidateUrls: media.videoCandidateUrls,
+                  videoCandidateIndex: media.videoCandidateIndex,
+                  videoSourceLabel: media.videoSourceLabel,
+                  imageSourceType: 'video',
+                };
+              }
+              return copy;
+            });
           }
-          return copy;
-        });
-      }
-    }
+        } catch (err) {
+          console.error('Video pipeline error for scene:', scene.scene_id, err);
+        }
+      })
+    );
   }, []);
 
   // Preload initial scenes images on mount
@@ -334,10 +304,10 @@ export default function App() {
 
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-cyan-400 font-bold block mb-1">
-                🎥 Đồng Cấu Hình Ảnh & Lời Thoại
+                🎥 100% Video MP4 Chuyển Động Thật
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Tự động trích xuất chủ thể trực tiếp từ lời thoại để tìm kiếm video thật, ảnh Wikipedia và khung hình AI 16:9 khớp 100% nội dung.
+                Direct Video Stream Pipeline nạp trực tiếp luồng Video MP4/WebM theo thực thể câu thoại, tự động lặp (Auto-Loop) và hỗ trợ đổi góc quay tức thì.
               </p>
             </div>
 

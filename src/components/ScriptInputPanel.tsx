@@ -205,7 +205,7 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
         <div className="flex items-start gap-1.5 p-2 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-emerald-300">
           <ImageIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
           <span>
-            <strong>Hình ảnh chính xác:</strong> Tự động bám sát danh từ thị giác cụ thể của từng cảnh.
+            <strong>100% Video MP4 Thật:</strong> Tự động dịch thực thể câu thoại sang luồng Video MP4 chuyển động.
           </span>
         </div>
         <div className="flex items-start gap-1.5 p-2 rounded-lg bg-cyan-950/20 border border-cyan-500/20 text-cyan-300">

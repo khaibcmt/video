@@ -20,6 +20,9 @@ export interface Scene {
   videoUrl?: string;
   videoElement?: HTMLVideoElement | null;
   videoLoaded?: boolean;
+  videoCandidateUrls?: string[];
+  videoCandidateIndex?: number;
+  videoSourceLabel?: string;
   imageUrl?: string;
   imageElement?: HTMLImageElement | null;
   imageLoaded?: boolean;

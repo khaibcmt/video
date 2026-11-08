@@ -168,11 +168,11 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
    - Trong 'narration_vi': TUYỆT ĐỐI LOẠI BỎ mọi ghi chú kỹ thuật, hướng dẫn đạo diễn, ký hiệu kịch bản như "[Cảnh 1]", "(Nhạc nền du dương)", "MC:", "Người dẫn chuyện:", "Hình ảnh:...", các câu lệnh chỉ dẫn của người dùng.
    - CHỈ GIỮ LẠI LỜI BÌNH / LỜI THOẠI NGUYÊN BẢN trong trẻo, tự nhiên, truyền cảm để đọc và hiển thị phụ đề.
 
-3. ĐỒNG CẤU HÌNH ẢNH VÀ NỘI DUNG CÂU CHUYỆN 100% (visual_prompt_en, search_keywords_en, wikipedia_topic_en):
-   - Hình ảnh của mỗi cảnh BẮT BUỘC phải miêu tả chính xác nhân vật, con vật, bối cảnh, hành động hoặc sự vật đang diễn ra trong câu thoại của cảnh đó.
-   - 'visual_prompt_en': Viết 1 câu mô tả cảnh quay điện ảnh chi tiết bằng tiếng Anh (Cinematic 16:9 documentary/story illustration, subject, action, setting, lighting) khớp 100% với nội dung câu chuyện của phân cảnh này để vẽ/render đúng hình ảnh câu chuyện.
-   - 'search_keywords_en': 2-3 danh từ cụ thể bằng tiếng Anh chỉ đúng chủ thể thị giác chính của cảnh (ví dụ: "sea turtle swimming ocean", "rabbit and tortoise forest", "Sung Sot cave stalactites"). Không dùng từ trừu tượng và không trùng lặp giữa các cảnh.
-   - 'wikipedia_topic_en': Tên chủ đề hoặc danh từ chính bằng tiếng Anh trên Wikipedia liên quan trực tiếp đến cảnh đó (ví dụ: "Sea turtle", "Hạ Long Bay", "Tortoise", "Silk Road", "Black hole").
+3. ĐỒNG CẤU VIDEO CHUYỂN ĐỘNG THẬT 100% (search_keywords_en, visual_prompt_en, wikipedia_topic_en):
+   - Toàn bộ phân cảnh BẮT BUỘC sử dụng VIDEO CHUYỂN ĐỘNG THẬT (MP4/WebM), tuyệt đối không dùng ảnh tĩnh.
+   - Nếu câu thoại nói về sinh vật, thiết bị hay bối cảnh nào, 'search_keywords_en' PHẢI dịch chính xác sang cụm từ khóa truy vấn video chuyển động tiếng Anh chuyên ngành của đúng thực thể đó (ví dụ: "swimming catfish underwater", "shrimp pond aerator splashing", "modern high school classroom discussion", "Ha Long Bay Vietnam aerial boat", "tortoise walking forest nature").
+   - 'visual_prompt_en': Mô tả cảnh quay video 16:9 chuyển động bằng tiếng Anh khớp 100% với hành động trong câu thoại.
+   - 'wikipedia_topic_en': Chủ đề thực thể tiếng Anh tương ứng (ví dụ: "Catfish", "Shrimp farming", "Hạ Long Bay", "Black hole").
 
 4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ THÀNH CHỮ TIẾNG VIỆT (narration_normalized):
    - TỰ ĐỘNG CHUYỂN ĐỔI 100% các con số, ngày tháng, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy phát âm chuẩn xác, không bị khựng.

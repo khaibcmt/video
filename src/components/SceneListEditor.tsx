@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Film,
   Camera,
@@ -13,15 +13,15 @@ import {
   Search,
   CheckCircle2,
   Clock,
-  Sparkles,
+  Video,
 } from 'lucide-react';
 import { Scene, CameraMotion, LutStyle } from '../types';
 import { audioEngine } from '../services/audioEngine';
 import {
   fetchVerifiedSceneMedia,
-  generateStorySceneImage,
-  loadImageWithFallback,
+  switchSceneToNextVideoClip,
 } from '../services/mediaLoader';
+import { translateNarrationToVideoQueries } from '../services/videoQueryTranslator';
 import { calculateSceneDuration, normalizeVietnameseNumbers } from '../services/scriptAnalyzer';
 
 interface SceneListEditorProps {
@@ -49,6 +49,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeUploadIndexRef = useRef<number | null>(null);
+  const [switchingSceneIdx, setSwitchingSceneIdx] = useState<number | null>(null);
 
   const totalCurrentDuration = scenes.reduce((acc, s) => acc + s.duration_seconds, 0);
 
@@ -56,147 +57,98 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
     audioEngine.playVietnameseNarration(scene.narration_normalized);
   };
 
-  const handleRefetchImage = async (index: number, keywords: string) => {
-    try {
-      const scene = scenes[index];
-      const usedUrls = new Set<string>(
-        scenes
-          .map((s) => s.videoUrl || s.imageUrl)
-          .filter((u): u is string => Boolean(u))
-      );
-      const media = await fetchVerifiedSceneMedia(
-        keywords,
-        scene?.narration_vi,
-        usedUrls,
-        scene?.visual_prompt_en,
-        scene?.wikipedia_topic_en,
-        (scene?.scene_id || index + 1) + Math.floor(Math.random() * 50),
-        true
-      );
-      if (media) {
-        onUpdateScene(index, {
-          videoUrl: media.videoUrl,
-          videoElement: media.videoElement || null,
-          videoLoaded: Boolean(media.videoElement),
-          imageUrl: media.imageUrl,
-          imageElement: media.imageElement || null,
-          imageLoaded: Boolean(media.imageElement),
-          imageFailed: false,
-          imageSourceType: media.sourceType,
-        });
-      } else {
-        onUpdateScene(index, {
-          videoLoaded: false,
-          imageLoaded: false,
-          imageFailed: true,
-          imageSourceType: 'procedural',
-        });
-      }
-    } catch {
-      onUpdateScene(index, {
-        videoLoaded: false,
-        imageLoaded: false,
-        imageFailed: true,
-        imageSourceType: 'procedural',
-      });
-    }
-  };
-
-  const handleGenerateAiSceneImage = async (index: number) => {
+  /**
+   * Cycles to the next MP4/WebM video clip in the scene's topic pool ("🔄 Đổi Video Clip Khác")
+   */
+  const handleSwitchNextVideoClip = async (index: number) => {
     const scene = scenes[index];
     if (!scene) return;
-    const promptToUse =
-      scene.visual_prompt_en || `${scene.search_keywords_en} - ${scene.narration_vi}`;
-
+    setSwitchingSceneIdx(index);
     try {
-      const aiUrl = await generateStorySceneImage(
-        promptToUse,
-        (scene.scene_id || index + 1) + Math.floor(Math.random() * 100)
-      );
-      if (aiUrl) {
-        const img = await loadImageWithFallback(aiUrl, 9000);
-        onUpdateScene(index, {
-          videoUrl: undefined,
-          videoElement: null,
-          videoLoaded: false,
-          imageUrl: aiUrl,
-          imageElement: img,
-          imageLoaded: true,
-          imageFailed: false,
-          imageSourceType: 'ai',
-        });
-        return;
-      }
-      // Fallback to direct 16:9 story synthesizer
-      const cleanPrompt = encodeURIComponent(
-        `cinematic 16:9 illustration of ${promptToUse}, vivid storytelling, no text`
-      );
-      const seed = Math.floor(Math.random() * 10000);
-      const streamUrl = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=1280&height=720&nologo=true&seed=${seed}`;
-      const img = await loadImageWithFallback(streamUrl, 9000);
+      const nextMedia = await switchSceneToNextVideoClip(scene, index);
       onUpdateScene(index, {
-        videoUrl: undefined,
-        videoElement: null,
-        videoLoaded: false,
-        imageUrl: streamUrl,
-        imageElement: img,
-        imageLoaded: true,
-        imageFailed: false,
-        imageSourceType: 'ai',
+        videoUrl: nextMedia.videoUrl,
+        videoElement: nextMedia.videoElement,
+        videoLoaded: true,
+        videoCandidateUrls: nextMedia.videoCandidateUrls,
+        videoCandidateIndex: nextMedia.videoCandidateIndex,
+        videoSourceLabel: nextMedia.videoSourceLabel,
+        imageSourceType: 'video',
       });
-    } catch {
-      handleRefetchImage(index, scene.search_keywords_en);
+    } finally {
+      setSwitchingSceneIdx(null);
     }
   };
 
-  const handleCustomMediaUpload = (
+  /**
+   * Re-queries the Direct Video Stream Pipeline based on the scene's narration & English keywords
+   */
+  const handleRefetchVideoFromNarration = async (index: number, customKeywords?: string) => {
+    const scene = scenes[index];
+    if (!scene) return;
+    setSwitchingSceneIdx(index);
+    try {
+      const translation = translateNarrationToVideoQueries(
+        scene.narration_vi,
+        customKeywords ?? scene.search_keywords_en,
+        scene.wikipedia_topic_en
+      );
+      const effectiveKeywords = customKeywords || translation.primaryQueryEn;
+
+      const media = await fetchVerifiedSceneMedia(
+        effectiveKeywords,
+        scene.narration_vi,
+        undefined,
+        scene.visual_prompt_en,
+        scene.wikipedia_topic_en,
+        scene.scene_id || index + 1,
+        0
+      );
+
+      onUpdateScene(index, {
+        search_keywords_en: effectiveKeywords,
+        videoUrl: media.videoUrl,
+        videoElement: media.videoElement,
+        videoLoaded: true,
+        videoCandidateUrls: media.videoCandidateUrls,
+        videoCandidateIndex: media.videoCandidateIndex,
+        videoSourceLabel: media.videoSourceLabel,
+        imageSourceType: 'video',
+      });
+    } finally {
+      setSwitchingSceneIdx(null);
+    }
+  };
+
+  const handleCustomVideoUpload = (
     e: React.ChangeEvent<HTMLInputElement>,
     index: number
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.type.startsWith('video/')) {
-      const blobUrl = URL.createObjectURL(file);
-      const video = document.createElement('video');
-      video.muted = true;
-      video.loop = true;
-      video.playsInline = true;
-      video.preload = 'auto';
-      video.onloadeddata = () => {
-        video.play().catch(() => {});
-        onUpdateScene(index, {
-          videoUrl: blobUrl,
-          videoElement: video,
-          videoLoaded: true,
-          imageSourceType: 'video',
-          imageFailed: false,
-        });
-      };
-      video.src = blobUrl;
-      video.load();
-      e.target.value = '';
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      const img = new Image();
-      img.onload = () => {
-        onUpdateScene(index, {
-          videoUrl: undefined,
-          videoElement: null,
-          videoLoaded: false,
-          imageUrl: dataUrl,
-          imageElement: img,
-          imageLoaded: true,
-          imageFailed: false,
-        });
-      };
-      img.src = dataUrl;
+    const blobUrl = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.preload = 'auto';
+    video.onloadeddata = () => {
+      video.play().catch(() => {});
+      const existingCandidates = scenes[index]?.videoCandidateUrls || [];
+      onUpdateScene(index, {
+        videoUrl: blobUrl,
+        videoElement: video,
+        videoLoaded: true,
+        videoCandidateUrls: [blobUrl, ...existingCandidates],
+        videoCandidateIndex: 0,
+        videoSourceLabel: `🎬 Video MP4 Tải Lên (${file.name})`,
+        imageSourceType: 'video',
+      });
     };
-    reader.readAsDataURL(file);
+    video.src = blobUrl;
+    video.load();
     e.target.value = '';
   };
 
@@ -207,15 +159,15 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4">
-      {/* Hidden File Input for Video (.mp4/.webm) or Image Upload */}
+      {/* Hidden File Input strictly for Video (.mp4 / .webm) Upload */}
       <input
         ref={fileInputRef}
         type="file"
-        accept="video/mp4,video/webm,image/*"
+        accept="video/mp4,video/webm,video/*"
         className="hidden"
         onChange={(e) => {
           if (activeUploadIndexRef.current !== null) {
-            handleCustomMediaUpload(e, activeUploadIndexRef.current);
+            handleCustomVideoUpload(e, activeUploadIndexRef.current);
           }
         }}
       />
@@ -225,7 +177,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
         <div className="flex items-center gap-2">
           <Film className="w-4 h-4 text-amber-400" />
           <h2 className="text-sm font-bold uppercase tracking-wider text-slate-200">
-            Danh Sách Phân Cảnh ({scenes.length})
+            Danh Sách Phân Cảnh Video MP4 ({scenes.length})
           </h2>
           <span className="text-xs font-mono px-2 py-0.5 rounded-md bg-slate-800 text-amber-300 font-bold border border-slate-700">
             Tổng: {totalCurrentDuration}s
@@ -257,9 +209,12 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
       </div>
 
       {/* Scene Cards List */}
-      <div className="flex flex-col gap-3 max-h-[640px] overflow-y-auto pr-1">
+      <div className="flex flex-col gap-3 max-h-[680px] overflow-y-auto pr-1">
         {scenes.map((scene, idx) => {
           const isSelected = idx === selectedSceneIndex;
+          const isSwitching = switchingSceneIdx === idx;
+          const candidateCount = scene.videoCandidateUrls?.length || 1;
+          const currentClipNum = ((scene.videoCandidateIndex ?? 0) % candidateCount) + 1;
 
           return (
             <div
@@ -281,6 +236,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                     type="text"
                     value={scene.title}
                     onChange={(e) => onUpdateScene(idx, { title: e.target.value })}
+                    aria-label={`Tiêu đề phân cảnh ${idx + 1}`}
                     className="bg-transparent font-bold text-xs text-white focus:outline-none focus:border-b border-amber-500"
                     placeholder="Tiêu đề phân cảnh"
                   />
@@ -298,6 +254,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                       min={3}
                       max={120}
                       value={scene.duration_seconds}
+                      aria-label={`Thời lượng phân cảnh ${idx + 1}`}
                       onChange={(e) => {
                         const val = Math.max(3, Math.min(120, parseInt(e.target.value) || 5));
                         onUpdateScene(idx, { duration_seconds: val });
@@ -313,6 +270,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                       onMoveScene(idx, 'up');
                     }}
                     disabled={idx === 0}
+                    aria-label={`Di chuyển cảnh ${idx + 1} lên`}
                     className="p-1 rounded text-slate-400 hover:text-white disabled:opacity-20"
                     title="Di chuyển lên"
                   >
@@ -325,6 +283,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                       onMoveScene(idx, 'down');
                     }}
                     disabled={idx === scenes.length - 1}
+                    aria-label={`Di chuyển cảnh ${idx + 1} xuống`}
                     className="p-1 rounded text-slate-400 hover:text-white disabled:opacity-20"
                     title="Di chuyển xuống"
                   >
@@ -336,6 +295,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                       e.stopPropagation();
                       onDeleteScene(idx);
                     }}
+                    aria-label={`Xóa phân cảnh ${idx + 1}`}
                     className="p-1 rounded text-slate-500 hover:text-rose-400 transition"
                     title="Xóa phân cảnh"
                   >
@@ -344,159 +304,160 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                 </div>
               </div>
 
-              {/* Main Content Row: Thumbnail & Controls */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-                {/* Thumbnail Preview (Real Video Clip or Image) */}
-                <div className="relative aspect-video rounded-lg overflow-hidden bg-slate-900 border border-slate-800 flex items-center justify-center group/thumb">
-                  {scene.videoUrl && scene.videoLoaded ? (
+              {/* Main Content Row: 100% Real Motion Video Preview Player & Controls */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-3">
+                {/* Left (5 cols): Live HTML5 Video MP4/WebM Preview + "🔄 Đổi Video Clip Khác" Button */}
+                <div className="md:col-span-5 flex flex-col gap-1.5">
+                  <div className="relative aspect-video rounded-lg overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center group/thumb">
                     <video
-                      src={scene.videoUrl}
-                      muted
-                      loop
-                      autoPlay
+                      key={scene.videoUrl || `scene_video_${idx}`}
+                      src={
+                        scene.videoUrl && !scene.videoUrl.startsWith('stream://')
+                          ? scene.videoUrl
+                          : undefined
+                      }
+                      crossOrigin="anonymous"
                       playsInline
+                      muted
+                      autoPlay
+                      loop
+                      data-testid={`scene-video-preview-${idx}`}
                       className="w-full h-full object-cover"
                     />
-                  ) : scene.imageUrl && scene.imageLoaded ? (
-                    <img
-                      src={scene.imageUrl}
-                      alt={scene.title}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center p-2 text-center">
-                      <Sparkles className="w-5 h-5 text-amber-400/80 mb-1" />
-                      <span className="text-[10px] text-slate-400 font-medium">
-                        Nền Procedural Canvas
-                      </span>
-                    </div>
-                  )}
 
-                  {/* Source Badge on Thumbnail */}
-                  {scene.imageSourceType === 'video' && (
-                    <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-emerald-500/90 text-slate-950 font-bold text-[9px] uppercase tracking-wider shadow">
-                      🎬 Video Thật
+                    {/* Live Video Clip Status Badge */}
+                    <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-emerald-500/90 text-slate-950 font-bold text-[10px] uppercase tracking-wider shadow flex items-center gap-1">
+                      <Video className="w-3 h-3" />
+                      <span>Clip {currentClipNum}/{candidateCount}</span>
                     </span>
-                  )}
-                  {scene.imageSourceType === 'ai' && (
-                    <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-amber-500/90 text-slate-950 font-bold text-[9px] uppercase tracking-wider shadow">
-                      ✨ Cảnh AI
-                    </span>
-                  )}
 
-                  {/* Thumbnail Overlay Buttons */}
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center gap-1.5 p-1">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleGenerateAiSceneImage(idx);
-                      }}
-                      className="p-1.5 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-slate-950 text-[10px] font-bold flex items-center gap-1"
-                      title="Vẽ cảnh AI 16:9 đồng cấu 100% nội dung câu chuyện"
-                    >
-                      <Sparkles className="w-3 h-3" />
-                      <span>AI</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRefetchImage(idx, scene.search_keywords_en);
-                      }}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1"
-                      title="Tìm cảnh quay video thật (.webm/.mp4) hoặc ảnh Wikipedia"
-                    >
-                      <Search className="w-3 h-3 text-amber-400" />
-                    </button>
+                    {/* Upload Custom MP4 Button in Top-Right Corner */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         triggerUpload(idx);
                       }}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1"
-                      title="Tải video (.mp4/.webm) hoặc ảnh từ máy tính"
+                      aria-label={`Tải video MP4 từ máy cho cảnh ${idx + 1}`}
+                      className="absolute top-1.5 right-1.5 p-1.5 rounded-lg bg-slate-900/85 hover:bg-slate-800 text-cyan-300 border border-slate-700/80 text-[10px] font-semibold flex items-center gap-1 shadow"
+                      title="Tải file video (.mp4/.webm) từ máy tính"
                     >
-                      <Upload className="w-3 h-3 text-cyan-400" />
+                      <Upload className="w-3 h-3" />
                     </button>
                   </div>
+
+                  {/* Dedicated Button: "🔄 Đổi Video Clip Khác" */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSwitchNextVideoClip(idx);
+                    }}
+                    disabled={isSwitching}
+                    aria-label={`Đổi Video Clip Khác cảnh ${idx + 1}`}
+                    className="w-full py-1.5 px-2.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-[11px] font-bold flex items-center justify-center gap-1.5 transition active:scale-98 disabled:opacity-50"
+                    title="Đổi ngay sang video MP4 chuyển động kế tiếp cùng chủ đề"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 text-amber-400 ${
+                        isSwitching ? 'animate-spin' : ''
+                      }`}
+                    />
+                    <span>
+                      {isSwitching ? 'Đang nạp video kế tiếp...' : '🔄 Đổi Video Clip Khác'}
+                    </span>
+                  </button>
                 </div>
 
-                {/* Motion, LUT, and Keywords */}
-                <div className="md:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {/* Camera Motion */}
+                {/* Right (7 cols): Specialized Video Query, Camera Motion, and LUT */}
+                <div className="md:col-span-7 flex flex-col justify-between gap-2">
+                  {/* Specialized English Video Search Query */}
                   <div>
-                    <label className="text-[10px] font-semibold text-slate-400 block mb-1 flex items-center gap-1">
-                      <Camera className="w-3 h-3 text-amber-400" /> Chuyển động
+                    <label className="text-[10px] font-semibold text-slate-400 block mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <Search className="w-3 h-3 text-emerald-400" /> Từ khóa Video Chuyên Ngành (EN):
+                      </span>
+                      <span className="text-[10px] text-emerald-400 font-mono">
+                        100% Video MP4/WebM
+                      </span>
                     </label>
-                    <select
-                      value={scene.camera_motion}
-                      onChange={(e) =>
-                        onUpdateScene(idx, {
-                          camera_motion: e.target.value as CameraMotion,
-                        })
-                      }
-                      className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-                    >
-                      <option value="zoom-in">Zoom-in (1.0 → 1.15)</option>
-                      <option value="zoom-out">Zoom-out (1.15 → 1.0)</option>
-                      <option value="pan-left">Pan-left (Phải sang Trái)</option>
-                      <option value="pan-right">Pan-right (Trái sang Phải)</option>
-                    </select>
-                  </div>
-
-                  {/* LUT Style */}
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-400 block mb-1 flex items-center gap-1">
-                      <Palette className="w-3 h-3 text-cyan-400" /> Bộ lọc LUT
-                    </label>
-                    <select
-                      value={scene.lut_style}
-                      onChange={(e) =>
-                        onUpdateScene(idx, { lut_style: e.target.value as LutStyle })
-                      }
-                      className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-                    >
-                      <option value="cinematic-teal-orange">Teal & Orange</option>
-                      <option value="warm-golden">Warm Golden</option>
-                      <option value="natural-documentary">Natural Documentary</option>
-                      <option value="high-contrast">High Contrast</option>
-                    </select>
-                  </div>
-
-                  {/* Search Keywords */}
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-400 block mb-1 flex items-center gap-1">
-                      <Search className="w-3 h-3 text-emerald-400" /> Chủ thể Hình ảnh (EN)
-                    </label>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5">
                       <input
                         type="text"
                         value={scene.search_keywords_en}
+                        aria-label={`Từ khóa tìm kiếm video cảnh ${idx + 1}`}
                         onChange={(e) =>
                           onUpdateScene(idx, { search_keywords_en: e.target.value })
                         }
-                        className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-                        placeholder="e.g. Ha Long Bay"
+                        className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                        placeholder="e.g. swimming catfish underwater"
                       />
                       <button
                         type="button"
-                        onClick={() => handleGenerateAiSceneImage(idx)}
-                        className="p-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-lg text-amber-300 transition"
-                        title="Vẽ ảnh AI 16:9 đồng cấu 100% nội dung cảnh này"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRefetchVideoFromNarration(idx, scene.search_keywords_en);
+                        }}
+                        aria-label={`Tìm video theo từ khóa cảnh ${idx + 1}`}
+                        className="px-2.5 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 rounded-lg text-emerald-300 text-xs font-semibold flex items-center gap-1 shrink-0 transition"
+                        title="Truy vấn video MP4 mới theo từ khóa chuyên ngành này"
                       >
-                        <Sparkles className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRefetchImage(idx, scene.search_keywords_en)}
-                        className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition"
-                        title="Đổi ảnh tư liệu khác"
-                      >
-                        <RefreshCw className="w-3 h-3 text-amber-400" />
+                        <Search className="w-3.5 h-3.5" />
+                        <span>Tìm Video</span>
                       </button>
                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Camera Motion */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-slate-400 block mb-1 flex items-center gap-1">
+                        <Camera className="w-3 h-3 text-amber-400" /> Góc máy Canvas
+                      </label>
+                      <select
+                        value={scene.camera_motion}
+                        aria-label={`Chuyển động máy quay cảnh ${idx + 1}`}
+                        onChange={(e) =>
+                          onUpdateScene(idx, {
+                            camera_motion: e.target.value as CameraMotion,
+                          })
+                        }
+                        className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                      >
+                        <option value="zoom-in">Zoom-in (1.0 → 1.08)</option>
+                        <option value="zoom-out">Zoom-out (1.08 → 1.0)</option>
+                        <option value="pan-left">Pan-left (Phải sang Trái)</option>
+                        <option value="pan-right">Pan-right (Trái sang Phải)</option>
+                      </select>
+                    </div>
+
+                    {/* LUT Style */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-slate-400 block mb-1 flex items-center gap-1">
+                        <Palette className="w-3 h-3 text-cyan-400" /> Bộ lọc màu LUT
+                      </label>
+                      <select
+                        value={scene.lut_style}
+                        aria-label={`Bộ lọc màu LUT cảnh ${idx + 1}`}
+                        onChange={(e) =>
+                          onUpdateScene(idx, { lut_style: e.target.value as LutStyle })
+                        }
+                        className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                      >
+                        <option value="cinematic-teal-orange">Teal & Orange</option>
+                        <option value="warm-golden">Warm Golden</option>
+                        <option value="natural-documentary">Natural Documentary</option>
+                        <option value="high-contrast">High Contrast</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Active Video Stream Info Pill */}
+                  <div className="px-2.5 py-1 rounded-lg bg-slate-950/80 border border-slate-800/90 text-[10px] text-slate-400 flex items-center justify-between truncate">
+                    <span className="truncate text-emerald-300 font-medium">
+                      {scene.videoSourceLabel || '🎬 Luồng Video MP4/WebM Trực Tiếp (Loop 30fps)'}
+                    </span>
+                    <span className="text-slate-500 font-mono shrink-0 ml-2">Auto-Loop</span>
                   </div>
                 </div>
               </div>
@@ -506,20 +467,21 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                     <span className="text-[11px] font-medium text-slate-400">
-                      Lời bình nguyên bản (Tìm hình ảnh/video trực tiếp từ lời thoại này):
+                      Lời bình nguyên bản (Tự động dịch thực thể sang từ khóa Video MP4):
                     </span>
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleRefetchImage(idx, scene.search_keywords_en);
+                          const translated = translateNarrationToVideoQueries(scene.narration_vi);
+                          handleRefetchVideoFromNarration(idx, translated.primaryQueryEn);
                         }}
                         className="text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition"
-                        title="Tìm kiếm lại video & hình ảnh khớp chính xác với lời thoại này"
+                        title="Trích xuất thực thể từ câu thoại và nạp đúng Video MP4 chuyển động của thực thể đó"
                       >
                         <Search className="w-3 h-3" />
-                        Đồng bộ Hình ảnh theo Lời thoại
+                        Đồng bộ Video theo Lời thoại
                       </button>
                       <button
                         type="button"
@@ -536,14 +498,17 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                   </div>
                   <textarea
                     value={scene.narration_vi}
+                    aria-label={`Lời bình tiếng Việt phân cảnh ${idx + 1}`}
                     onChange={(e) => {
                       const newText = e.target.value;
                       const norm = normalizeVietnameseNumbers(newText);
                       const dur = calculateSceneDuration(norm);
+                      const translated = translateNarrationToVideoQueries(newText);
                       onUpdateScene(idx, {
                         narration_vi: newText,
                         narration_normalized: norm,
                         duration_seconds: dur,
+                        search_keywords_en: translated.primaryQueryEn,
                       });
                     }}
                     rows={2}

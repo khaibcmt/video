@@ -68,7 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-400 hidden sm:block">
-            Gemini AI Script Analysis • Ken Burns Canvas • Vietnamese TTS • Audio Ducking
+            Gemini AI Script Analysis • 100% Real Motion Video MP4 • Vietnamese Voiceover
           </p>
         </div>
       </div>
