@@ -1,6 +1,7 @@
 import { Scene, ExportProgress } from '../types';
 import { audioEngine } from './audioEngine';
 import { CanvasRenderer } from './canvasRenderer';
+import { waitForSceneMediaReady } from './mediaLoader';
 
 export type VideoExportFormat = 'mp4' | 'webm';
 
@@ -149,10 +150,11 @@ export async function exportVideo(
     statusText: 'Đang nạp và giải mã toàn bộ lời thoại tiếng Việt vào luồng âm thanh xuất file...',
   });
 
-  // 2. Preload and decode all Vietnamese TTS chunks into AudioBuffers so they route 100% through MediaStreamDestination
-  const audioDurations = await audioEngine.preloadNarrations(
-    scenes.map((s) => s.narration_normalized)
-  );
+  // 2. Preload and decode all Vietnamese TTS chunks + verify scene media readiness (canplaythrough / onload)
+  const [audioDurations] = await Promise.all([
+    audioEngine.preloadNarrations(scenes.map((s) => s.narration_normalized)),
+    Promise.all(scenes.map((s) => waitForSceneMediaReady(s, 2500))),
+  ]);
 
   // Adjust effective export durations so no scene ever cuts off its voiceover
   const exportScenes: Scene[] = scenes.map((sc, idx) => {

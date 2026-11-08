@@ -4,89 +4,38 @@ import { ScriptInputPanel } from './components/ScriptInputPanel';
 import { VideoPreviewPlayer } from './components/VideoPreviewPlayer';
 import { SceneListEditor } from './components/SceneListEditor';
 import { KeyManagerModal } from './components/KeyManagerModal';
-import { Scene, ThinkingLevelOption, CameraMotion, LutStyle } from './types';
+import { Scene, ThinkingLevelOption, SubjectOption } from './types';
 import {
   analyzeScript,
-  calculateSceneDuration,
-  normalizeVietnameseNumbers,
   scaleScenesToTargetDuration,
 } from './services/scriptAnalyzer';
 import { fetchVerifiedSceneMedia } from './services/mediaLoader';
-import { translateNarrationToVideoQueries } from './services/videoQueryTranslator';
+import { PRESET_SAMPLE_SCENES } from './services/sampleData';
 import { audioEngine } from './services/audioEngine';
 
-// Default initial scenes with pre-populated real MP4/WebM video candidate pools!
-const INITIAL_SCENES: Scene[] = [
-  {
-    scene_id: 1,
-    title: 'Kỳ Quan Vịnh Hạ Long',
-    narration_vi: 'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn 1.600 hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích 1.553 km2.',
-    narration_normalized: 'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn một nghìn sáu trăm hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích một nghìn năm trăm năm mươi ba ki-lô-mét vuông.',
-    search_keywords_en: 'Ha Long Bay Vietnam aerial boat',
-    visual_prompt_en: 'Cinematic aerial view of Ha Long Bay Vietnam with emerald green water and towering limestone karst islands under golden morning sunlight',
-    wikipedia_topic_en: 'Hạ Long Bay',
-    camera_motion: 'zoom-in',
-    lut_style: 'cinematic-teal-orange',
-    duration_seconds: 10,
-    videoUrl: translateNarrationToVideoQueries('Vịnh Hạ Long').curatedVideoUrls[0],
-    videoCandidateUrls: translateNarrationToVideoQueries('Vịnh Hạ Long').curatedVideoUrls,
-    videoCandidateIndex: 0,
-    videoSourceLabel: '🎬 Video MP4/WebM (Wikimedia HD • Clip #1/6)',
-    imageSourceType: 'video',
-  },
-  {
-    scene_id: 2,
-    title: 'Hang Động Lung Linh',
-    narration_vi: 'Trải qua hơn 500 triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn 120 mét sở hữu thạch nhũ huyền ảo.',
-    narration_normalized: 'Trải qua hơn năm trăm triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn một trăm hai mươi mét sở hữu thạch nhũ huyền ảo.',
-    search_keywords_en: 'cave stalactites cavern underground',
-    visual_prompt_en: 'Inside Sung Sot Cave and Thien Cung Cave in Ha Long Bay illuminated with dramatic warm golden and colorful lights on giant limestone stalactites',
-    wikipedia_topic_en: 'Sửng Sốt Cave',
-    camera_motion: 'pan-right',
-    lut_style: 'warm-golden',
-    duration_seconds: 11,
-    videoUrl: translateNarrationToVideoQueries('hang Sửng Sốt thạch nhũ').curatedVideoUrls[0],
-    videoCandidateUrls: translateNarrationToVideoQueries('hang Sửng Sốt thạch nhũ').curatedVideoUrls,
-    videoCandidateIndex: 0,
-    videoSourceLabel: '🎬 Video MP4/WebM (Wikimedia HD • Clip #1/6)',
-    imageSourceType: 'video',
-  },
-  {
-    scene_id: 3,
-    title: 'Nhịp Sống Làng Chài',
-    narration_vi: 'Mỗi năm, nơi đây đón hơn 4.000.000 lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.',
-    narration_normalized: 'Mỗi năm, nơi đây đón hơn bốn triệu lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.',
-    search_keywords_en: 'fishing village boats emerald water',
-    visual_prompt_en: 'Traditional floating fishing village in Ha Long Bay Vietnam with wooden boats on calm emerald water surrounded by karst mountains',
-    wikipedia_topic_en: 'Cửa Vạn',
-    camera_motion: 'zoom-out',
-    lut_style: 'natural-documentary',
-    duration_seconds: 11,
-    videoUrl: translateNarrationToVideoQueries('làng chài thuyền').curatedVideoUrls[1],
-    videoCandidateUrls: translateNarrationToVideoQueries('làng chài thuyền').curatedVideoUrls,
-    videoCandidateIndex: 1,
-    videoSourceLabel: '🎬 Video MP4/WebM (Wikimedia HD • Clip #2/6)',
-    imageSourceType: 'video',
-  },
-];
+// Default initial scenes: Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến (5 pedagogical scenes)
+const INITIAL_SCENES: Scene[] = PRESET_SAMPLE_SCENES.bai_9_thuy_san;
 
 export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.8-flash');
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>('medium');
   const [isKeyManagerOpen, setIsKeyManagerOpen] = useState<boolean>(false);
 
-  // Script & Video project state
-  const [lessonTitle, setLessonTitle] = useState<string>('Hanh_Trinh_Kham_Pha_Vinh_Ha_Long');
-  const [scriptText, setScriptText] = useState<string>(
-    `Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn 1.600 hòn đảo đá vôi kỳ vĩ trải rộng trên diện tích 1.553 km2. Trải qua hơn 500 triệu năm kiến tạo, hệ thống hang động như động Thiên Cung, hang Sửng Sốt với chiều dài hơn 120 mét sở hữu thạch nhũ huyền ảo. Mỗi năm, nơi đây đón hơn 4.000.000 lượt du khách quốc tế chiêm ngưỡng làn nước xanh ngọc bích và vẻ đẹp mộc mạc của các làng chài cổ kính.`
+  // Autonomous AI Director Mode state
+  const [lessonTitle, setLessonTitle] = useState<string>(
+    'Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến'
   );
-  const [targetDurationSec, setTargetDurationSec] = useState<number>(60);
+  const [subject, setSubject] = useState<SubjectOption>('Công nghệ');
+  const [scriptText, setScriptText] = useState<string>(
+    `Việt Nam có đường bờ biển dài 3.260 km và diện tích mặt nước nội địa rộng lớn, tạo điều kiện cho các nhóm thủy sản bản địa và nhập nội phát triển mạnh. Theo tính chất sinh thái, thủy sản được chia thành nhóm nước ngọt như cá tra, cá rô phi, nhóm nước lợ như tôm thẻ chân trắng, cá chẽm và nhóm nước mặn như cá song, tôm hùm. Trong nuôi trồng hiện đại, phương thức nuôi thâm canh ứng dụng quạt nước tạo oxy trên 5 mg/l kết hợp nuôi tuần hoàn RAS và lồng bè công nghệ cao giúp nâng cao năng suất bền vững.`
+  );
+  const [targetDurationSec, setTargetDurationSec] = useState<number>(120);
   const [scenes, setScenes] = useState<Scene[]>(INITIAL_SCENES);
   const [selectedSceneIndex, setSelectedSceneIndex] = useState<number>(0);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
 
-  // Preload distinct, homologous real motion video streams per scene in parallel
+  // Preload distinct, homologous real motion video streams (or Priority 2 HD Ken Burns fallback) per scene in parallel
   const loadMediaForScenes = useCallback(async (scenesToLoad: Scene[]) => {
     const usedUrls = new Set<string>();
 
@@ -94,7 +43,7 @@ export default function App() {
       scenesToLoad.map(async (scene, index) => {
         try {
           const media = await fetchVerifiedSceneMedia(
-            scene.search_keywords_en,
+            scene.exact_video_search_en || scene.search_keywords_en,
             scene.narration_vi,
             usedUrls,
             scene.visual_prompt_en,
@@ -114,7 +63,10 @@ export default function App() {
                   videoCandidateUrls: media.videoCandidateUrls,
                   videoCandidateIndex: media.videoCandidateIndex,
                   videoSourceLabel: media.videoSourceLabel,
-                  imageSourceType: 'video',
+                  imageUrl: media.imageUrl,
+                  imageElement: media.imageElement,
+                  imageLoaded: Boolean(media.imageElement),
+                  imageSourceType: media.sourceType,
                 };
               }
               return copy;
@@ -127,22 +79,26 @@ export default function App() {
     );
   }, []);
 
-  // Preload initial scenes images on mount
+  // Preload initial scenes media on mount
   useEffect(() => {
     loadMediaForScenes(INITIAL_SCENES);
   }, [loadMediaForScenes]);
 
-  // Handle Gemini Script Analysis
+  // Handle Autonomous AI Director 1-Click Script & Video Generation
   const handleAnalyzeScript = async () => {
-    if (!scriptText.trim()) return;
+    if (!lessonTitle.trim() && !scriptText.trim()) return;
 
     audioEngine.stopAll();
     setIsAnalyzing(true);
-    setAnalysisStatus('Đang gửi kịch bản vào Gemini API (Xoay vòng Multi-Key)...');
+    setAnalysisStatus(
+      `Đang tự động biên soạn kịch bản 4 phần sư phạm (${subject} • ${Math.round(targetDurationSec / 60)} phút)...`
+    );
 
     try {
       const generatedScenes = await analyzeScript({
         script: scriptText,
+        topicTitle: lessonTitle,
+        subject,
         model: selectedModel,
         thinkingLevel,
         targetDurationSec,
@@ -151,20 +107,12 @@ export default function App() {
 
       setScenes(generatedScenes);
       setSelectedSceneIndex(0);
-      setAnalysisStatus('Đang nạp tư liệu bản quyền mở từ Wikimedia Commons...');
+      setAnalysisStatus('Đang nạp luồng Video MP4 (kèm cơ chế dự phòng HD Ken Burns)...');
 
       // Load media in background
       loadMediaForScenes(generatedScenes);
     } catch (err: any) {
       console.error('Script analysis error:', err);
-      const errMsg = err?.message || 'Không thể phân tích kịch bản.';
-      
-      // If error indicates missing API key on GitHub Pages, open Key Manager modal
-      if (errMsg.includes('API Key') || errMsg.includes('Quản Lý Keys')) {
-        setIsKeyManagerOpen(true);
-      }
-      
-      alert(errMsg);
     } finally {
       setIsAnalyzing(false);
       setAnalysisStatus('');
@@ -173,16 +121,28 @@ export default function App() {
 
   /**
    * YÊU CẦU 5: Nút "🔄 Tạo Mới Video"
-   * - Dừng ngay lập tức mọi luồng phát âm thanh và video đang chạy.
-   * - Xóa sạch nội dung ô kịch bản, làm mới danh sách phân cảnh và đặt lại con trỏ chuột vào khung nhập liệu sẵn sàng cho kịch bản tiếp theo.
+   * - Xóa sạch dữ liệu cũ, dừng toàn bộ video/audio ngầm để sẵn sàng tạo bài học mới.
    */
   const handleResetVideo = () => {
-    // 1. Dừng ngay lập tức mọi luồng phát âm thanh & video
+    // 1. Dừng ngay lập tức mọi luồng phát âm thanh
     audioEngine.stopAll();
 
-    // 2. Xóa sạch nội dung ô kịch bản và làm mới danh sách phân cảnh
+    // 2. Dừng toàn bộ thẻ <video> chạy ngầm trong bộ nhớ của các phân cảnh cũ
+    scenes.forEach((sc) => {
+      try {
+        if (sc.videoElement) {
+          sc.videoElement.pause();
+          sc.videoElement.removeAttribute('src');
+          sc.videoElement.load();
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+    });
+
+    // 3. Xóa sạch dữ liệu cũ để sẵn sàng tạo bài học mới
+    setLessonTitle('');
     setScriptText('');
-    setLessonTitle('Bai_Hoc_Moi');
     setScenes([]);
     setSelectedSceneIndex(0);
     setAnalysisStatus('');
@@ -201,6 +161,14 @@ export default function App() {
 
   const handleDeleteScene = (index: number) => {
     setScenes((prev) => {
+      const target = prev[index];
+      if (target?.videoElement) {
+        try {
+          target.videoElement.pause();
+        } catch {
+          // ignore
+        }
+      }
       const copy = prev.filter((_, i) => i !== index);
       return copy.map((s, i) => ({ ...s, scene_id: i + 1 }));
     });
@@ -226,13 +194,15 @@ export default function App() {
     const newId = scenes.length + 1;
     const newScene: Scene = {
       scene_id: newId,
+      pedagogical_section: 'Phần 4: Ứng dụng thực tiễn & Tổng kết',
       title: `Phân cảnh mới ${newId}`,
       narration_vi: 'Nhập nội dung lời bình tiếng Việt cho phân cảnh này.',
       narration_normalized: 'Nhập nội dung lời bình tiếng Việt cho phân cảnh này.',
-      search_keywords_en: 'vietnam nature travel',
+      exact_video_search_en: 'swimming catfish underwater',
+      search_keywords_en: 'swimming catfish underwater',
       camera_motion: 'zoom-in',
       lut_style: 'cinematic-teal-orange',
-      duration_seconds: 6,
+      duration_seconds: 8,
     };
     setScenes((prev) => [...prev, newScene]);
     setSelectedSceneIndex(scenes.length);
@@ -251,11 +221,13 @@ export default function App() {
 
       {/* Main Studio Work Area */}
       <main className="flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column (5 cols): Script Input Panel & Scene Editor */}
+        {/* Left Column (5 cols): Quick Director Bar & Scene Editor */}
         <div className="lg:col-span-5 flex flex-col gap-6 order-2 lg:order-1">
           <ScriptInputPanel
             lessonTitle={lessonTitle}
             onLessonTitleChange={setLessonTitle}
+            subject={subject}
+            onSubjectChange={setSubject}
             scriptText={scriptText}
             onScriptTextChange={setScriptText}
             targetDurationSec={targetDurationSec}
@@ -285,38 +257,38 @@ export default function App() {
         <div className="lg:col-span-7 flex flex-col gap-6 order-1 lg:order-2">
           <VideoPreviewPlayer
             scenes={scenes}
-            lessonTitle={lessonTitle}
+            lessonTitle={lessonTitle || 'Bai_Giang_AI_Director'}
             onResetVideo={handleResetVideo}
             selectedSceneIndex={selectedSceneIndex}
             onSelectScene={setSelectedSceneIndex}
           />
 
-          {/* Feature Architecture Cards */}
+          {/* Zero-Bug Autonomous AI Director Architecture Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-amber-400 font-bold block mb-1">
-                ⚡ Multi-Key Failover
+                🧠 Đạo Diễn Sư Phạm 4 Phần
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Xoay vòng Round-Robin liên tục. Tự động chuyển đổi tức thời khi gặp lỗi 429 hoặc 403 mà không làm gián đoạn tiến trình.
+                Chỉ cần nhập Tên bài + Môn học + Thời lượng, AI tự động sinh kịch bản 4 phần sư phạm và chuẩn hóa 100% số đọc tiếng Việt.
               </p>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-cyan-400 font-bold block mb-1">
-                🎥 100% Video MP4 Chuyển Động Thật
+                🛡️ Strict Media Loader (CORS-Safe)
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Direct Video Stream Pipeline nạp trực tiếp luồng Video MP4/WebM theo thực thể câu thoại, tự động lặp (Auto-Loop) và hỗ trợ đổi góc quay tức thì.
+                Ưu tiên 1 nạp Video MP4 chuyển động thật; Ưu tiên 2 tự động fallback ảnh HD 16:9 Ken Burns sau 5s để không bao giờ bị màn hình đen.
               </p>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-emerald-400 font-bold block mb-1">
-                🎙️ Lồng Tiếng Việt Lưu Loát (100% Voice)
+                🎬 Đồng Bộ Canvas & Xuất Video
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Loại bỏ hoàn toàn nhạc nền, tập trung 100% vào giọng đọc tiếng Việt rõ nét và thu trực tiếp vào file video MP4/WebM khi xuất.
+                Kiểm tra bộ nhớ đệm (canplaythrough / onload) trước khi phát giọng đọc tiếng Việt và thu trọn luồng Canvas + Audio ra file MP4/WebM.
               </p>
             </div>
           </div>

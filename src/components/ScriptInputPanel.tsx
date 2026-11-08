@@ -1,21 +1,23 @@
 import React, { useRef } from 'react';
 import {
-  Sparkles,
   RotateCcw,
   BookOpen,
-  FileText,
   Clock,
   Loader2,
   Wand2,
-  Sliders,
   CheckCircle2,
-  Image as ImageIcon,
-  ShieldCheck,
+  Video,
+  GraduationCap,
+  Rocket,
+  Sliders,
 } from 'lucide-react';
+import { SubjectOption } from '../types';
 
 interface ScriptInputPanelProps {
   lessonTitle: string;
   onLessonTitleChange: (title: string) => void;
+  subject: SubjectOption;
+  onSubjectChange: (subject: SubjectOption) => void;
   scriptText: string;
   onScriptTextChange: (text: string) => void;
   targetDurationSec: number;
@@ -26,52 +28,56 @@ interface ScriptInputPanelProps {
   analysisStatus: string;
 }
 
-const SAMPLE_SCRIPTS = [
-  {
-    name: 'Vịnh Hạ Long',
-    badge: 'Kỳ quan',
-    title: 'Hành_Trình_Kham_Pha_Vịnh_Hạ_Long',
-    content: `Vịnh Hạ Long là di sản thiên nhiên thế giới nổi tiếng của Việt Nam với hơn 1.600 hòn đảo đá vôi lớn nhỏ trải rộng trên diện tích 1.553 km2. 
-Trải qua hơn 500 triệu năm kiến tạo địa chất kỳ vĩ, nơi đây sở hữu hệ thống hang động lung linh như động Thiên Cung, hang Sửng Sốt với chiều dài hơn 120 mét. 
-Mỗi năm, kỳ quan đón hơn 4.000.000 lượt du khách quốc tế đến chiêm ngưỡng làn nước xanh màu ngọc bích và nhịp sống yên bình của các làng chài cổ kính.`,
-  },
-  {
-    name: 'Con Đường Tơ Lụa',
-    badge: 'Lịch sử',
-    title: 'Bi_Ca_Con_Duong_To_Lua',
-    content: `Con Đường Tơ Lụa là mạng lưới giao thương cổ đại vĩ đại nhất nhân loại, trải dài hơn 6.400 km nối liền phương Đông và phương Tây. 
-Khởi nguồn từ thế kỷ 2 trước Công nguyên dưới triều đại nhà Hán, các đoàn thương buôn vượt qua sa mạc khắc nghiệt với hơn 100 con lạc đà thồ lụa, gia vị và gốm sứ. 
-Tuyến đường không chỉ trao đổi hàng hóa trị giá hàng triệu lượng vàng mà còn lan tỏa tri thức, nghệ thuật và tôn giáo qua hơn 1.500 năm thăng trầm lịch sử.`,
-  },
-  {
-    name: 'Hố Đen Vũ Trụ',
-    badge: 'Vật lý thiên văn',
-    title: 'Bi_An_Ho_Den_Vu_Tru',
-    content: `Hố đen là một trong những thực thể bí ẩn và quyền năng nhất trong vũ trụ bao la. 
-Với lực hấp dẫn vô hạn tại điểm kỳ dị, ngay cả ánh sáng di chuyển với vận tốc 300.000 km/s cũng không thể trốn thoát khỏi chân trời sự kiện. 
-Hố đen siêu khối lượng ở trung tâm Dải Ngân Hà có khối lượng gấp 4.000.000 lần Mặt Trời của chúng ta, bẻ cong thời gian và không gian theo thuyết tương đối của Einstein.`,
-  },
-  {
-    name: 'Cà Phê Việt Nam',
-    badge: 'Văn hóa & Đời sống',
-    title: 'Huong_Vi_Ca_Phe_Viet_Nam',
-    content: `Việt Nam tự hào là quốc gia xuất khẩu cà phê Robusta số 1 thế giới với sản lượng hơn 1.600.000 tấn mỗi năm, chiếm gần 18% thị phần toàn cầu. 
-Từ những đồn điền bạt ngàn tại vùng đất đỏ bazan Buôn Ma Thuột với độ cao trên 800 mét so với mực nước biển, từng hạt cà phê chín mọng được thu hái cẩn trọng. 
-Ly cà phê phin đậm đà nhỏ từng giọt hòa quyện cùng sữa đặc ngọt ngào đã trở thành biểu tượng văn hóa độc đáo của người Việt.`,
-  },
+const SUBJECT_OPTIONS: SubjectOption[] = [
+  'Sinh học',
+  'Công nghệ',
+  'Vật lý',
+  'Hóa học',
 ];
 
-const DURATION_PRESETS = [
-  { label: '30s (Shorts)', value: 30 },
-  { label: '1 phút', value: 60 },
-  { label: '2 phút', value: 120 },
-  { label: '3 phút', value: 180 },
-  { label: '5 phút (Tối đa)', value: 300 },
+const DIRECTOR_DURATION_OPTIONS = [
+  { label: '1 Phút (~3 cảnh)', value: 60 },
+  { label: '2 Phút (~5 cảnh)', value: 120 },
+  { label: '3 Phút (~7-8 cảnh)', value: 180 },
+];
+
+const SAMPLE_TOPICS: {
+  name: string;
+  subject: SubjectOption;
+  title: string;
+  content: string;
+}[] = [
+  {
+    name: 'Bài 9: Thủy sản',
+    subject: 'Công nghệ',
+    title: 'Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến',
+    content: `Việt Nam có đường bờ biển dài 3.260 km và diện tích mặt nước nội địa rộng lớn, tạo điều kiện cho các nhóm thủy sản bản địa và nhập nội phát triển mạnh. Theo tính chất sinh thái, thủy sản được chia thành nhóm nước ngọt như cá tra, cá rô phi, nhóm nước lợ như tôm thẻ chân trắng, cá chẽm và nhóm nước mặn như cá song, tôm hùm. Trong nuôi trồng hiện đại, phương thức nuôi thâm canh ứng dụng quạt nước tạo oxy trên 5 mg/l kết hợp nuôi tuần hoàn RAS và lồng bè công nghệ cao giúp nâng cao năng suất bền vững.`,
+  },
+  {
+    name: 'Quang hợp thực vật',
+    subject: 'Sinh học',
+    title: 'Bài 4: Quang hợp ở thực vật và chu trình trao đổi chất',
+    content: `Quang hợp ở thực vật là quá trình lục lạp hấp thụ năng lượng ánh sáng mặt trời để tổng hợp chất hữu cơ từ khí cacbonic và nước, đồng thời giải phóng dưỡng khí oxy. Tại màng thylakoid, pha sáng diễn ra quá trình quang phân li nước tạo năng lượng ATP và NADPH. Tiếp đó, chu trình Calvin cố định CO2 ở chất nền lục lạp, quyết định trên 90% sinh khối cây trồng trong nông nghiệp công nghệ cao.`,
+  },
+  {
+    name: 'Cảm ứng điện từ',
+    subject: 'Vật lý',
+    title: 'Bài 12: Hiện tượng cảm ứng điện từ và máy phát điện xoay chiều',
+    content: `Hiện tượng cảm ứng điện từ xuất hiện khi từ thông qua mạch kín biến thiên theo định luật Faraday, sinh ra dòng điện cảm ứng. Nguyên lý này được ứng dụng trực tiếp trong các tua-bin máy phát điện xoay chiều 3 pha có tần số 50 Hz tại nhà máy thủy điện và điện gió, truyền tải qua lưới điện cao áp 500 kV phục vụ sản xuất công nghiệp.`,
+  },
+  {
+    name: 'Phản ứng Oxi hóa - Khử',
+    subject: 'Hóa học',
+    title: 'Bài 15: Phản ứng oxi hóa khử và ứng dụng điện phân',
+    content: `Phản ứng oxi hóa khử là quá trình chuyển dịch electron giữa chất khử và chất oxi hóa diễn ra phổ biến trong tự nhiên và công nghiệp hóa chất. Trong phòng thí nghiệm, sự nhường và nhận electron thể hiện rõ qua phản ứng giữa kim loại với dung dịch axit hoặc quá trình điện phân dung dịch muối đồng sunfat để tinh luyện đồng nguyên chất đạt độ tinh khiết 99,9%.`,
+  },
 ];
 
 export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
   lessonTitle,
   onLessonTitleChange,
+  subject,
+  onSubjectChange,
   scriptText,
   onScriptTextChange,
   targetDurationSec,
@@ -81,25 +87,21 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
   onResetVideo,
   analysisStatus,
 }) => {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   const wordCount = scriptText.trim() ? scriptText.trim().split(/\s+/).length : 0;
-  const charCount = scriptText.length;
-  // Estimated video duration of raw script at 3.25 words/sec
-  const rawSpeechSeconds = wordCount > 0 ? Math.max(5, Math.round(wordCount / 3.25 + 1)) : 0;
+  const canGenerate = Boolean(lessonTitle.trim() || scriptText.trim());
 
-  const handleApplySample = (sample: (typeof SAMPLE_SCRIPTS)[0]) => {
+  const handleApplyTopic = (sample: (typeof SAMPLE_TOPICS)[0]) => {
     onLessonTitleChange(sample.title);
+    onSubjectChange(sample.subject);
     onScriptTextChange(sample.content);
-    if (textareaRef.current) {
-      textareaRef.current.focus();
-    }
   };
 
   const handleReset = () => {
     onResetVideo();
-    if (textareaRef.current) {
-      textareaRef.current.focus();
+    if (titleInputRef.current) {
+      titleInputRef.current.focus();
     }
   };
 
@@ -109,199 +111,208 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
+  const estimatedSceneCount =
+    targetDurationSec <= 60 ? '3 cảnh' : targetDurationSec <= 120 ? '5 cảnh' : '7-8 cảnh';
+
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4">
-      {/* Top Header & Reset Button */}
-      <div className="flex items-center justify-between">
+      {/* Top Header & Reset Button ("🔄 Tạo Mới Video") */}
+      <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4 text-amber-400" />
-          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-200">
-            Kịch Bản & Thiết Lập Video
+          <Wand2 className="w-4 h-4 text-amber-400" />
+          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-100">
+            Đạo Diễn Tự Động Khôn Ngoan (1-Chạm)
           </h2>
         </div>
 
-        {/* Nút Tạo Mới Video */}
         <button
           type="button"
           onClick={handleReset}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500/50 text-slate-300 hover:text-rose-300 text-xs font-semibold transition"
-          title="Dừng toàn bộ luồng phát và xóa trắng để nhập kịch bản mới"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-rose-950/50 border border-slate-700 hover:border-rose-500/50 text-slate-200 hover:text-rose-300 text-xs font-semibold transition"
+          title="Xóa sạch dữ liệu cũ, dừng toàn bộ video/audio ngầm để tạo bài học mới"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>🔄 Tạo Mới Video</span>
         </button>
       </div>
 
-      {/* Lesson Title Input */}
-      <div>
-        <label className="block text-xs font-medium text-slate-400 mb-1.5">
-          Tên bài học / Tiêu đề xuất file (.mp4 / .webm / .srt)
-        </label>
-        <input
-          type="text"
-          value={lessonTitle}
-          onChange={(e) => onLessonTitleChange(e.target.value)}
-          placeholder="Nhap_Ten_Bai_Hoc_Hoac_Chu_De"
-          className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2 text-xs font-semibold text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition"
-        />
-      </div>
-
-      {/* YÊU CẦU 3: TÙY CHỈNH TẠO ĐỘ DÀI CỦA VIDEO (TỐI ĐA 5 PHÚT) */}
-      <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
-        <div className="flex items-center justify-between">
-          <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-            <Sliders className="w-3.5 h-3.5" />
-            <span>TÙY CHỈNH ĐỘ DÀI VIDEO (TỐI ĐA 5 PHÚT):</span>
+      {/* YÊU CẦU 1: GIAO DIỆN NHẬP LIỆU 1-CHẠM (QUICK DIRECTOR BAR) */}
+      <div className="p-4 rounded-xl bg-slate-950/85 border border-amber-500/30 space-y-3.5 shadow-inner">
+        {/* Ô nhập: Tên bài học / Chủ đề */}
+        <div>
+          <label
+            htmlFor="director-topic-input"
+            className="block text-xs font-bold text-amber-300 mb-1.5 flex items-center justify-between"
+          >
+            <span>1. Tên bài học / Chủ đề bài giảng:</span>
+            <span className="text-[10px] font-normal text-slate-400">
+              Chỉ cần nhập tên bài là AI tự sinh kịch bản 4 phần
+            </span>
           </label>
-          <div className="flex items-center gap-1.5 font-mono text-xs px-2.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold">
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>{formatMinSec(targetDurationSec)}</span>
-            <span className="text-slate-400 font-normal">({targetDurationSec}s)</span>
+          <input
+            id="director-topic-input"
+            ref={titleInputRef}
+            type="text"
+            value={lessonTitle}
+            onChange={(e) => onLessonTitleChange(e.target.value)}
+            placeholder="Ví dụ: Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến"
+            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition"
+          />
+        </div>
+
+        {/* Hàng Dropdown Môn học & Thời lượng */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Dropdown Môn học */}
+          <div>
+            <label
+              htmlFor="director-subject-select"
+              className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5"
+            >
+              <GraduationCap className="w-3.5 h-3.5 text-cyan-400" />
+              <span>2. Môn học:</span>
+            </label>
+            <select
+              id="director-subject-select"
+              value={subject}
+              onChange={(e) => onSubjectChange(e.target.value as SubjectOption)}
+              aria-label="Môn học"
+              className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-100 focus:outline-none focus:border-amber-500 transition"
+            >
+              {SUBJECT_OPTIONS.map((subj) => (
+                <option key={subj} value={subj}>
+                  {subj}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Dropdown Thời lượng */}
+          <div>
+            <label
+              htmlFor="director-duration-select"
+              className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5"
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>3. Thời lượng kịch bản:</span>
+            </label>
+            <select
+              id="director-duration-select"
+              value={
+                DIRECTOR_DURATION_OPTIONS.some((o) => o.value === targetDurationSec)
+                  ? targetDurationSec
+                  : 120
+              }
+              onChange={(e) => onTargetDurationChange(Number(e.target.value))}
+              aria-label="Thời lượng"
+              className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-amber-300 focus:outline-none focus:border-amber-500 transition"
+            >
+              {DIRECTOR_DURATION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {/* Range Slider from 30s to 300s */}
-        <div className="space-y-1">
+        {/* Nút Hành Động 1-Chạm: 🚀 TỰ ĐỘNG TẠO KỊCH BẢN & DỰNG VIDEO CHUYỂN ĐỘNG */}
+        <button
+          type="button"
+          disabled={isAnalyzing || !canGenerate}
+          onClick={onAnalyzeScript}
+          className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all transform active:scale-98"
+        >
+          {isAnalyzing ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+              <span className="truncate">
+                {analysisStatus || 'Đang tự động biên soạn kịch bản 4 phần & nạp video...'}
+              </span>
+            </>
+          ) : (
+            <>
+              <Rocket className="w-4 h-4 shrink-0" />
+              <span>🚀 TỰ ĐỘNG TẠO KỊCH BẢN & DỰNG VIDEO CHUYỂN ĐỘNG</span>
+            </>
+          )}
+        </button>
+
+        {/* Thanh tùy chỉnh tinh chỉnh thời lượng mở rộng (30s - 300s) */}
+        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-3">
+          <span className="text-[11px] text-slate-400 flex items-center gap-1 shrink-0">
+            <Sliders className="w-3 h-3 text-amber-400" />
+            Tinh chỉnh ({formatMinSec(targetDurationSec)} • ~{estimatedSceneCount}):
+          </span>
           <input
             type="range"
             min={30}
             max={300}
-            step={5}
+            step={30}
             value={targetDurationSec}
+            aria-label="Thanh trượt thời lượng video"
             onChange={(e) => onTargetDurationChange(Number(e.target.value))}
-            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500 hover:accent-amber-400 transition"
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
           />
-          <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-            <span>30s</span>
-            <span>1:00</span>
-            <span>2:00</span>
-            <span>3:00</span>
-            <span>4:00</span>
-            <span className="text-amber-400 font-bold">5:00 (Max)</span>
-          </div>
         </div>
+      </div>
 
-        {/* Quick Presets */}
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          {DURATION_PRESETS.map((preset) => (
+      {/* Bài học mẫu 1-chạm theo từng môn */}
+      <div>
+        <div className="flex items-center gap-1.5 mb-2">
+          <BookOpen className="w-3.5 h-3.5 text-amber-400/80" />
+          <span className="text-xs font-medium text-slate-400">
+            Chọn nhanh bài học mẫu chuẩn sư phạm:
+          </span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {SAMPLE_TOPICS.map((item) => (
             <button
-              key={preset.value}
+              key={item.name}
               type="button"
-              onClick={() => onTargetDurationChange(preset.value)}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition ${
-                targetDurationSec === preset.value
-                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold shadow-sm'
-                  : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600'
-              }`}
+              onClick={() => handleApplyTopic(item)}
+              className="text-left p-2 rounded-xl bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/40 transition group"
             >
-              {preset.label}
+              <span className="text-[10px] text-amber-400 font-bold block uppercase tracking-wider">
+                {item.subject}
+              </span>
+              <span className="text-xs font-semibold text-slate-200 group-hover:text-amber-200 truncate block">
+                {item.name}
+              </span>
             </button>
           ))}
         </div>
       </div>
 
-      {/* YÊU CẦU 1 & 2: TIÊU CHÍ ĐẢM BẢO CHẤT LƯỢNG KỊCH BẢN */}
+      {/* Khung ghi chú / kịch bản chi tiết (Tùy chọn) */}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between text-xs text-slate-400">
+          <span>Ghi chú chỉ dẫn hoặc nội dung kịch bản bổ sung (Tùy chọn):</span>
+          <span className="text-amber-400 font-semibold">{wordCount} từ</span>
+        </div>
+
+        <textarea
+          value={scriptText}
+          onChange={(e) => onScriptTextChange(e.target.value)}
+          placeholder="Có thể để trống (AI sẽ tự biên soạn từ Tên bài học & Môn học ở trên) hoặc dán nội dung bài giảng chi tiết vào đây..."
+          rows={3}
+          className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs leading-relaxed text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition resize-y font-sans"
+        />
+      </div>
+
+      {/* Cam kết kỹ thuật Zero-Bug Video Engine */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
         <div className="flex items-start gap-1.5 p-2 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-emerald-300">
-          <ImageIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+          <Video className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
           <span>
-            <strong>100% Video MP4 Thật:</strong> Tự động dịch thực thể câu thoại sang luồng Video MP4 chuyển động.
+            <strong>Ưu tiên 1 & 2 (Zero-Black-Screen):</strong> Nạp video MP4 CORS-safe; tự động fallback ảnh HD 16:9 Ken Burns sau 5s nếu mạng chậm.
           </span>
         </div>
         <div className="flex items-start gap-1.5 p-2 rounded-lg bg-cyan-950/20 border border-cyan-500/20 text-cyan-300">
           <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
           <span>
-            <strong>Lược bỏ từ thừa:</strong> Tự lọc bỏ [Cảnh], (Nhạc), ghi chú đạo diễn để giữ lời thoại sạch.
+            <strong>Chuẩn hóa số đọc tiếng Việt:</strong> Tự chuyển "3.260 km" → "ba nghìn hai trăm sáu mươi ki-lô-mét".
           </span>
         </div>
-      </div>
-
-      {/* Sample Scripts Quick Picker */}
-      <div>
-        <div className="flex items-center gap-1.5 mb-2">
-          <BookOpen className="w-3.5 h-3.5 text-amber-400/80" />
-          <span className="text-xs font-medium text-slate-400">
-            Kịch bản mẫu tham khảo nhanh:
-          </span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {SAMPLE_SCRIPTS.map((s) => (
-            <button
-              key={s.name}
-              type="button"
-              onClick={() => handleApplySample(s)}
-              className="text-left p-2 rounded-xl bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/40 transition group"
-            >
-              <span className="text-[10px] text-amber-400 font-bold block uppercase tracking-wider">
-                {s.badge}
-              </span>
-              <span className="text-xs font-semibold text-slate-200 group-hover:text-amber-200 truncate block">
-                {s.name}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Textarea Input */}
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>Nội dung kịch bản hoặc chỉ dẫn tạo video:</span>
-          <div className="flex items-center gap-3">
-            <span>{charCount} ký tự</span>
-            <span>•</span>
-            <span className="text-amber-400 font-semibold">{wordCount} từ</span>
-            <span>•</span>
-            <span className="flex items-center gap-1 text-slate-300">
-              <Clock className="w-3 h-3 text-slate-400" /> ~{rawSpeechSeconds}s thoại
-            </span>
-          </div>
-        </div>
-
-        <textarea
-          ref={textareaRef}
-          value={scriptText}
-          onChange={(e) => onScriptTextChange(e.target.value)}
-          placeholder="Nhập nội dung kịch bản, cốt truyện hoặc chủ đề... AI sẽ tự động:&#10;1. Lược bỏ các từ ngữ không liên quan đến lời thoại ([Cảnh], (Nhạc), hướng dẫn kỹ thuật).&#10;2. Phân chia các phân cảnh với hình ảnh khớp 100% nội dung chỉ dẫn.&#10;3. Điều phối độ dài các cảnh khớp đúng thời lượng mục tiêu bạn đã chọn (tối đa 5 phút)."
-          rows={5}
-          className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-4 py-3 text-xs leading-relaxed text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition resize-y font-sans"
-        />
-      </div>
-
-      {/* Action Button & Status */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-        <div className="text-xs text-slate-400 flex items-center gap-2">
-          {isAnalyzing ? (
-            <div className="flex items-center gap-2 text-amber-400">
-              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-              <span className="truncate">{analysisStatus || 'Đang phân tích kịch bản...'}</span>
-            </div>
-          ) : (
-            <span className="text-slate-500 text-[11px] flex items-center gap-1">
-              <Wand2 className="w-3.5 h-3.5 text-amber-500" />
-              Tự động khớp hình ảnh & điều phối độ dài {formatMinSec(targetDurationSec)}
-            </span>
-          )}
-        </div>
-
-        <button
-          type="button"
-          disabled={isAnalyzing || !scriptText.trim()}
-          onClick={onAnalyzeScript}
-          className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all transform active:scale-95 shrink-0"
-        >
-          {isAnalyzing ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Đang Xử Lý...</span>
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4" />
-              <span>✨ Phân Tích & Dựng Phân Cảnh ({formatMinSec(targetDurationSec)})</span>
-            </>
-          )}
-        </button>
       </div>
     </div>
   );

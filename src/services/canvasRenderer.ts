@@ -76,8 +76,10 @@ export class CanvasRenderer {
   }
 
   /**
-   * Draws a real HTMLVideoElement stream onto the 16:9 Canvas (Zero static images).
-   * Automatically loops the video clip if the scene narration is longer than the clip duration.
+   * Draws either:
+   * - Priority 1: Real HTMLVideoElement stream onto the 16:9 Canvas (Auto-loops smoothly if narration exceeds clip duration).
+   * - Priority 2 (Smart Fallback): High-resolution 16:9 HTMLImageElement with cinematic Ken Burns Pan/Zoom (zoom-in, zoom-out, pan-left, pan-right).
+   * - Priority 3: Animated procedural canvas fallback so the screen is 100% immune to black frames.
    */
   private drawSceneLayer(
     scene: Scene,
@@ -95,20 +97,20 @@ export class CanvasRenderer {
     ctx.filter = filterStr;
 
     const currentVideoElement = scene.videoElement;
+    const currentImageElement = scene.imageElement;
 
     if (
       currentVideoElement &&
       scene.videoLoaded &&
       currentVideoElement.readyState >= 2
     ) {
-      // Ensure seamless looping if narration duration exceeds video clip duration
+      // Priority 1: Live MP4/WebM Video Stream
       currentVideoElement.loop = true;
       currentVideoElement.muted = true;
       if (currentVideoElement.ended || currentVideoElement.paused) {
         currentVideoElement.play().catch(() => {});
       }
 
-      // Subtle camera motion transform on top of live video footage
       let scale = 1.0;
       let offsetX = 0;
       const motion: CameraMotion = scene.camera_motion || 'zoom-in';
@@ -136,10 +138,61 @@ export class CanvasRenderer {
         ctx.translate(-width / 2, -height / 2);
       }
 
-      // Direct 16:9 video frame draw as specified: ctx.drawImage(currentVideoElement, 0, 0, canvas.width, canvas.height)
       ctx.drawImage(currentVideoElement, 0, 0, width, height);
+    } else if (
+      currentImageElement &&
+      scene.imageLoaded &&
+      currentImageElement.complete &&
+      currentImageElement.naturalWidth > 0
+    ) {
+      // Priority 2 (Smart Fallback): HD 16:9 Image with cinematic Ken Burns Pan/Zoom
+      let scale = 1.0;
+      let offsetX = 0;
+      let offsetY = 0;
+      const motion: CameraMotion = scene.camera_motion || 'zoom-in';
+
+      switch (motion) {
+        case 'zoom-in':
+          scale = 1.0 + 0.15 * progress;
+          break;
+        case 'zoom-out':
+          scale = 1.15 - 0.15 * progress;
+          break;
+        case 'pan-left':
+          scale = 1.12;
+          offsetX = 45 - 90 * progress;
+          break;
+        case 'pan-right':
+          scale = 1.12;
+          offsetX = -45 + 90 * progress;
+          break;
+      }
+
+      ctx.translate(width / 2 + offsetX, height / 2 + offsetY);
+      ctx.scale(scale, scale);
+      ctx.translate(-width / 2, -height / 2);
+
+      // Aspect-ratio cover draw onto 1280x720 canvas
+      const imgRatio = currentImageElement.naturalWidth / currentImageElement.naturalHeight;
+      const canvasRatio = width / height;
+      let drawW = width;
+      let drawH = height;
+      let drawX = 0;
+      let drawY = 0;
+
+      if (imgRatio > canvasRatio) {
+        drawH = height;
+        drawW = height * imgRatio;
+        drawX = (width - drawW) / 2;
+      } else {
+        drawW = width;
+        drawH = width / imgRatio;
+        drawY = (height - drawH) / 2;
+      }
+
+      ctx.drawImage(currentImageElement, drawX, drawY, drawW, drawH);
     } else {
-      // Animated motion stream frame while remote video element decodes first frame
+      // Priority 3: Animated motion stream frame while remote media decodes
       const animatedFallback = generateProceduralBackground(
         scene.lut_style,
         scene.scene_id,
@@ -196,7 +249,7 @@ export class CanvasRenderer {
 
     const bottomBar = ctx.createLinearGradient(0, height - 140, 0, height);
     bottomBar.addColorStop(0, 'rgba(5, 5, 10, 0)');
-    bottomBar.addColorStop(1, 'rgba(5, 5, 10, 0.7)');
+    bottomBar.addColorStop(1, 'rgba(5, 5, 10, 0.72)');
     ctx.fillStyle = bottomBar;
     ctx.fillRect(0, height - 140, width, 140);
 
@@ -204,7 +257,7 @@ export class CanvasRenderer {
   }
 
   /**
-   * Draws dynamic Vietnamese subtitles with word-wrapping and dark outline
+   * Draws large Vietnamese subtitles with thick dark outline at the bottom of the screen
    */
   private drawSubtitles(narration: string): void {
     if (!narration || !narration.trim()) return;
@@ -213,7 +266,7 @@ export class CanvasRenderer {
     const ctx = this.ctx;
 
     ctx.save();
-    ctx.font = '700 24px "Be Vietnam Pro", system-ui, sans-serif';
+    ctx.font = '700 25px "Be Vietnam Pro", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
@@ -235,7 +288,7 @@ export class CanvasRenderer {
     if (currentLine) lines.push(currentLine);
 
     const displayLines = lines.slice(-2);
-    const lineHeight = 34;
+    const lineHeight = 36;
     const totalTextHeight = displayLines.length * lineHeight;
 
     const centerY = height - 70;
@@ -243,10 +296,10 @@ export class CanvasRenderer {
     const maxLineWidth = Math.max(
       ...displayLines.map((l) => ctx.measureText(l).width)
     );
-    const cardW = Math.min(1060, maxLineWidth + 56);
+    const cardW = Math.min(1080, maxLineWidth + 56);
 
-    ctx.fillStyle = 'rgba(6, 9, 15, 0.82)';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.fillStyle = 'rgba(6, 9, 15, 0.84)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
     ctx.lineWidth = 1;
 
     ctx.beginPath();
@@ -263,17 +316,17 @@ export class CanvasRenderer {
     displayLines.forEach((line, index) => {
       const lineY =
         centerY -
-        (totalTextHeight / 2) +
+        totalTextHeight / 2 +
         index * lineHeight +
         lineHeight / 2;
 
-      ctx.lineWidth = 5;
+      ctx.lineWidth = 6;
       ctx.strokeStyle = '#020617';
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
       ctx.strokeText(line, width / 2, lineY);
 
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.88)';
       ctx.shadowBlur = 8;
       ctx.shadowOffsetY = 2;
 

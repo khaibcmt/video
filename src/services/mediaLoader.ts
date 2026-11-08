@@ -7,6 +7,7 @@ import {
 } from './videoQueryTranslator';
 
 const videoCache = new Map<string, HTMLVideoElement>();
+const imageCache = new Map<string, HTMLImageElement>();
 const wikimediaQueryCache = new Map<string, string[]>();
 const proceduralCanvasCache = new Map<string, HTMLCanvasElement>();
 const synthesizedBlobUrlCache = new Map<string, string>();
@@ -27,8 +28,7 @@ export function extractVisualKeywordsFromVietnamese(viText: string): string | nu
 }
 
 /**
- * NGUỒN 1: Wikimedia Commons Video Query (chỉ lọc file mime: video/webm, video/mp4)
- * Returns an array of ranked playable video URLs matching the specialized English query.
+ * PRIORITY 1A: Wikimedia Commons Video Query (mime: video/webm, video/mp4)
  */
 export async function searchWikimediaVideoPool(
   keyword: string,
@@ -73,7 +73,7 @@ export async function searchWikimediaVideoPool(
       if (!res.ok) continue;
 
       const text = await res.text();
-      if (!text.startsWith('{')) continue; // Guard against Wikimedia plain-text rate limit message
+      if (!text.startsWith('{')) continue;
 
       const data = JSON.parse(text);
       const pages = data?.query?.pages;
@@ -111,7 +111,7 @@ export async function searchWikimediaVideoPool(
         }
       }
     } catch {
-      // Ignore network or rate-limit errors and fall through to curated open CDN pool
+      // Fall through to curated open CDN pool
     }
   }
 
@@ -119,24 +119,12 @@ export async function searchWikimediaVideoPool(
 }
 
 /**
- * Legacy single-URL helper kept for backward compatibility
- */
-export async function searchWikimediaVideoFootage(
-  keyword: string,
-  narrationVi?: string,
-  usedUrls?: Set<string>
-): Promise<string | null> {
-  const pool = await searchWikimediaVideoPool(keyword, narrationVi, usedUrls);
-  return pool.length > 0 ? pool[0] : null;
-}
-
-/**
- * Creates a hidden <video crossOrigin="anonymous" playsInline muted autoPlay loop> element
- * and verifies that it decodes frames for Canvas rendering.
+ * Loads an HTML5 Video element with strict CORS = "anonymous" and a 5-second max timeout.
+ * Waits for canplaythrough / loadeddata so frames are buffered in memory.
  */
 export function loadVideoWithFallback(
   videoUrl: string,
-  timeoutMs: number = 2500
+  timeoutMs: number = 4500
 ): Promise<HTMLVideoElement> {
   if (videoCache.has(videoUrl)) {
     const cached = videoCache.get(videoUrl)!;
@@ -163,6 +151,7 @@ export function loadVideoWithFallback(
 
     const cleanup = () => {
       if (timer) clearTimeout(timer);
+      video.oncanplaythrough = null;
       video.onloadeddata = null;
       video.oncanplay = null;
       video.onerror = null;
@@ -177,23 +166,29 @@ export function loadVideoWithFallback(
       resolve(video);
     };
 
+    video.oncanplaythrough = handleReady;
     video.onloadeddata = handleReady;
     video.oncanplay = handleReady;
 
     video.onerror = () => {
-      if (!triedProxy && !isStaticHost && !videoUrl.startsWith('blob:') && !videoUrl.startsWith('/api/')) {
+      if (
+        !triedProxy &&
+        !isStaticHost &&
+        !videoUrl.startsWith('blob:') &&
+        !videoUrl.startsWith('/api/')
+      ) {
         triedProxy = true;
         video.src = `/api/proxy-video?url=${encodeURIComponent(videoUrl)}`;
         video.load();
         return;
       }
       cleanup();
-      reject(new Error(`Failed to load video stream: ${videoUrl}`));
+      reject(new Error(`CORS or 404 on video stream: ${videoUrl}`));
     };
 
     timer = setTimeout(() => {
       cleanup();
-      reject(new Error(`Video stream load timed out: ${videoUrl}`));
+      reject(new Error(`Video stream load exceeded ${timeoutMs}ms: ${videoUrl}`));
     }, timeoutMs);
 
     video.src = videoUrl;
@@ -202,8 +197,155 @@ export function loadVideoWithFallback(
 }
 
 /**
- * Draws a dynamic animated frame for a specific entity category so that synthesized fallback
- * video streams also display real continuous motion matching the narration subject!
+ * PRIORITY 2 FALLBACK: Search Wikipedia / Wikimedia Commons for a high-resolution HD 16:9 image
+ * when a video stream takes > 5s or encounters CORS/404.
+ */
+export async function searchHdFallbackImage(
+  queryEn: string,
+  wikipediaTopicEn?: string,
+  narrationVi?: string,
+  usedUrls?: Set<string>
+): Promise<string | null> {
+  const candidates = [wikipediaTopicEn, queryEn, narrationVi]
+    .filter(Boolean)
+    .map((s) => String(s).replace(/[^\w\s\u00C0-\u1EF9-]/g, ' ').trim());
+
+  // 1. Try Wikipedia Lead Article Image (1280px HD)
+  for (const q of candidates) {
+    if (!q) continue;
+    try {
+      const lang = /[\u00C0-\u1EF9]/.test(q) ? 'vi' : 'en';
+      const endpoint = `https://${lang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
+        q
+      )}&gsrlimit=5&prop=pageimages&piprop=original|thumbnail&pithumbsize=1280&format=json&origin=*`;
+
+      const res = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (!text.startsWith('{')) continue;
+
+      const data = JSON.parse(text);
+      const pages = Object.values(data?.query?.pages || {}) as any[];
+      pages.sort((a, b) => (a.index || 99) - (b.index || 99));
+
+      for (const page of pages) {
+        const imgUrl: string | undefined =
+          page?.thumbnail?.source || page?.original?.source;
+        if (!imgUrl) continue;
+        const lower = imgUrl.toLowerCase();
+        if (
+          lower.endsWith('.svg') ||
+          lower.endsWith('.gif') ||
+          lower.endsWith('.pdf') ||
+          lower.includes('flag_of') ||
+          lower.includes('locator_map')
+        ) {
+          continue;
+        }
+        if (usedUrls && usedUrls.has(imgUrl)) continue;
+        if (usedUrls) usedUrls.add(imgUrl);
+        return imgUrl;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // 2. Try Wikimedia Commons Bitmap HD photograph
+  if (queryEn) {
+    try {
+      const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
+        `${queryEn} filetype:bitmap`
+      )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime|dimensions&iiurlwidth=1280&gsrlimit=8&format=json&origin=*`;
+
+      const res = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+      if (res.ok) {
+        const text = await res.text();
+        if (text.startsWith('{')) {
+          const data = JSON.parse(text);
+          const pages = Object.values(data?.query?.pages || {}) as any[];
+          for (const page of pages) {
+            const info = page?.imageinfo?.[0];
+            const url: string | undefined = info?.thumburl || info?.url;
+            if (!url) continue;
+            const mime = String(info?.mime || '').toLowerCase();
+            if (
+              (mime.includes('jpeg') || mime.includes('jpg') || mime.includes('png')) &&
+              (info?.width || 1280) >= 600
+            ) {
+              if (usedUrls && usedUrls.has(url)) continue;
+              if (usedUrls) usedUrls.add(url);
+              return url;
+            }
+          }
+        }
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Loads an HD 16:9 image with crossOrigin = "anonymous" and onload verification
+ */
+export function loadImageWithFallback(
+  imageUrl: string,
+  timeoutMs: number = 4500
+): Promise<HTMLImageElement> {
+  if (imageCache.has(imageUrl)) {
+    return Promise.resolve(imageCache.get(imageUrl)!);
+  }
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    if (!imageUrl.startsWith('data:')) {
+      img.crossOrigin = 'anonymous';
+    }
+
+    let timer: any = null;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      img.onload = null;
+      img.onerror = null;
+    };
+
+    img.onload = () => {
+      cleanup();
+      imageCache.set(imageUrl, img);
+      resolve(img);
+    };
+
+    img.onerror = () => {
+      cleanup();
+      if (!isStaticHost && !imageUrl.startsWith('data:')) {
+        const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+        const proxyImg = new Image();
+        proxyImg.crossOrigin = 'anonymous';
+        proxyImg.onload = () => {
+          imageCache.set(imageUrl, proxyImg);
+          resolve(proxyImg);
+        };
+        proxyImg.onerror = () => reject(new Error(`Image load failed: ${imageUrl}`));
+        proxyImg.src = proxyUrl;
+      } else {
+        reject(new Error(`Image CORS/404: ${imageUrl}`));
+      }
+    };
+
+    timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Image load timed out: ${imageUrl}`));
+    }, timeoutMs);
+
+    img.src = imageUrl;
+  });
+}
+
+/**
+ * Draws a dynamic animated frame for a specific entity category
  */
 function drawAnimatedCategoryFrame(
   ctx: CanvasRenderingContext2D,
@@ -213,7 +355,6 @@ function drawAnimatedCategoryFrame(
   t: number,
   variant: number = 0
 ): void {
-  // Base background gradient depending on category & variant
   const hueShift = (variant * 28) % 360;
   const grad = ctx.createLinearGradient(0, 0, w, h);
 
@@ -247,7 +388,6 @@ function drawAnimatedCategoryFrame(
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, w, h);
 
-  // Animated sunbeams / underwater light rays
   for (let i = 0; i < 6; i++) {
     const rayX = ((i * 220 + Math.sin(t * 0.8 + i) * 60) % (w + 200)) - 100;
     const rayGrad = ctx.createLinearGradient(rayX, 0, rayX + 140, h);
@@ -263,13 +403,11 @@ function drawAnimatedCategoryFrame(
     ctx.fill();
   }
 
-  // Category-specific moving entities
   if (
     category === 'aquaculture_fish' ||
     category === 'marine_life' ||
     category === 'turtle'
   ) {
-    // Swimming fish / sea creatures moving smoothly across frame
     for (let i = 0; i < 9; i++) {
       const speed = 90 + (i % 4) * 35;
       const fx = ((t * speed + i * 180) % (w + 160)) - 80;
@@ -283,7 +421,6 @@ function drawAnimatedCategoryFrame(
       ctx.ellipse(0, 0, size, size * 0.42, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Tail fin wagging
       const tailWag = Math.sin(t * 10 + i) * 8;
       ctx.beginPath();
       ctx.moveTo(-size * 0.85, 0);
@@ -294,7 +431,6 @@ function drawAnimatedCategoryFrame(
       ctx.restore();
     }
 
-    // Rising water bubbles
     for (let b = 0; b < 22; b++) {
       const bx = (b * 73 + Math.sin(t * 2 + b) * 20) % w;
       const by = h - ((t * 70 + b * 45) % h);
@@ -305,7 +441,6 @@ function drawAnimatedCategoryFrame(
       ctx.stroke();
     }
   } else if (category === 'aquaculture_shrimp') {
-    // Splashing pond aerator waves and oxygen bubbles
     for (let wIdx = 0; wIdx < 4; wIdx++) {
       ctx.beginPath();
       const baseY = h * 0.52 + wIdx * 45;
@@ -321,10 +456,9 @@ function drawAnimatedCategoryFrame(
       ctx.fill();
     }
 
-    // Splashing water droplets
     for (let d = 0; d < 35; d++) {
       const angle = (d / 35) * Math.PI + Math.sin(t * 6 + d) * 0.3;
-      const dist = ((t * 180 + d * 19) % 220);
+      const dist = (t * 180 + d * 19) % 220;
       const dx = w / 2 + Math.cos(angle) * dist * 1.6;
       const dy = h * 0.55 - Math.sin(angle) * dist;
       ctx.fillStyle = 'rgba(224, 242, 254, 0.8)';
@@ -333,11 +467,10 @@ function drawAnimatedCategoryFrame(
       ctx.fill();
     }
   } else if (category === 'space_cosmos') {
-    // Rotating accretion disk / galaxy spiral
     ctx.save();
     ctx.translate(w / 2, h / 2);
     for (let s = 0; s < 65; s++) {
-      const orbitAngle = (s * 0.35) + t * (0.6 + (s % 5) * 0.15);
+      const orbitAngle = s * 0.35 + t * (0.6 + (s % 5) * 0.15);
       const radius = 55 + s * 6;
       const sx = Math.cos(orbitAngle) * radius * 1.4;
       const sy = Math.sin(orbitAngle) * radius * 0.55;
@@ -346,7 +479,6 @@ function drawAnimatedCategoryFrame(
       ctx.arc(sx, sy, 2 + (s % 3), 0, Math.PI * 2);
       ctx.fill();
     }
-    // Event horizon core
     ctx.fillStyle = '#000000';
     ctx.beginPath();
     ctx.arc(0, 0, 48, 0, Math.PI * 2);
@@ -356,7 +488,6 @@ function drawAnimatedCategoryFrame(
     ctx.stroke();
     ctx.restore();
   } else {
-    // Animated karst mountains, flowing river waves, and drifting clouds/birds
     for (let layer = 0; layer < 3; layer++) {
       ctx.beginPath();
       const baseH = h * (0.55 + layer * 0.12);
@@ -374,7 +505,6 @@ function drawAnimatedCategoryFrame(
       ctx.fill();
     }
 
-    // Flying birds / floating lanterns in motion
     for (let b = 0; b < 8; b++) {
       const bx = ((t * (55 + b * 10) + b * 160) % (w + 100)) - 50;
       const by = 130 + (b % 4) * 45 + Math.sin(t * 4 + b) * 12;
@@ -392,96 +522,47 @@ function drawAnimatedCategoryFrame(
   ctx.restore();
 }
 
-/**
- * Creates a real, live-playing HTMLVideoElement backed by a 30fps animated MediaStream / WebM clip
- * so that even if external CDNs are unreachable or rate-limited, the scene is 100% a real motion <video>!
- */
 export async function createSynthesizedMotionVideo(
   category: string,
   sceneId: number = 1,
   variantIndex: number = 0
 ): Promise<{ videoUrl: string; videoElement: HTMLVideoElement }> {
-  const cacheKey = `synth_${category}_${sceneId}_${variantIndex}`;
+  const cacheKey = `stream://${category}_${sceneId}_${variantIndex}`;
+  if (videoCache.has(cacheKey)) {
+    return { videoUrl: cacheKey, videoElement: videoCache.get(cacheKey)! };
+  }
 
   const canvas = document.createElement('canvas');
   canvas.width = 640;
   canvas.height = 360;
   const ctx = canvas.getContext('2d')!;
 
-  let startTime = performance.now();
-  let animId = 0;
-  const animate = () => {
+  const startTime = performance.now();
+  drawAnimatedCategoryFrame(ctx, canvas.width, canvas.height, category, 0, variantIndex);
+
+  window.setInterval(() => {
     const elapsed = (performance.now() - startTime) / 1000;
     drawAnimatedCategoryFrame(ctx, canvas.width, canvas.height, category, elapsed, variantIndex);
-    animId = requestAnimationFrame(animate);
-  };
-  animate();
+  }, 100);
 
-  const stream = canvas.captureStream(30);
+  const stream = canvas.captureStream(15);
   const video = document.createElement('video');
   video.muted = true;
   video.loop = true;
   video.playsInline = true;
   video.autoplay = true;
-
-  // If MediaRecorder is available, record a short 2.5s seamless loop into a real .webm/.mp4 blob URL
-  // so <video src={scene.videoUrl}> in SceneListEditor also works via standard src attribute!
-  if (synthesizedBlobUrlCache.has(cacheKey)) {
-    cancelAnimationFrame(animId);
-    const cachedBlobUrl = synthesizedBlobUrlCache.get(cacheKey)!;
-    video.src = cachedBlobUrl;
-    await video.play().catch(() => {});
-    return { videoUrl: cachedBlobUrl, videoElement: video };
-  }
-
-  if (typeof MediaRecorder !== 'undefined') {
-    try {
-      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
-        ? 'video/webm;codecs=vp8'
-        : 'video/webm';
-      const recorder = new MediaRecorder(stream, {
-        mimeType: mime,
-        videoBitsPerSecond: 1_500_000,
-      });
-      const chunks: Blob[] = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunks.push(e.data);
-      };
-
-      const blobUrl = await new Promise<string>((resolve) => {
-        recorder.onstop = () => {
-          cancelAnimationFrame(animId);
-          const blob = new Blob(chunks, { type: mime });
-          resolve(URL.createObjectURL(blob));
-        };
-        recorder.start(200);
-        setTimeout(() => {
-          if (recorder.state !== 'inactive') recorder.stop();
-        }, 1200);
-      });
-
-      synthesizedBlobUrlCache.set(cacheKey, blobUrl);
-      video.src = blobUrl;
-      video.load();
-      await video.play().catch(() => {});
-      videoCache.set(blobUrl, video);
-      return { videoUrl: blobUrl, videoElement: video };
-    } catch {
-      // Fallback to direct srcObject stream
-    }
-  }
-
   video.srcObject = stream;
   await video.play().catch(() => {});
-  return { videoUrl: `stream://${cacheKey}`, videoElement: video };
+
+  videoCache.set(cacheKey, video);
+  return { videoUrl: cacheKey, videoElement: video };
 }
 
 /**
- * MASTER 100% REAL MOTION VIDEO RESOLVER (Direct Video Stream Pipeline):
- * - Nguồn 1: Wikimedia Commons Video Query (chỉ lọc video/webm, video/mp4)
- * - Nguồn 2: Kho Video Tư liệu Mở trực tiếp (Mixkit / Wikimedia Direct CDN không dính CORS)
- * - Nguồn 3: Tự động dịch câu thoại sang từ khóa chuyên ngành tiếng Anh & tạo luồng Video MP4/WebM chuyển động thật
- * Tuyệt đối KHÔNG dùng ảnh tĩnh!
+ * STRICT MEDIA LOADER PIPELINE (Zero-Bug Video & Ken Burns HD Image Fallback):
+ * - Ưu tiên 1: Tải video clip MP4/WebM chuyển động thật theo chủ thể (`crossOrigin = "anonymous"`, giới hạn 5 giây).
+ * - Ưu tiên 2: Nếu video tải chậm quá 5 giây hoặc lỗi CORS/404, TỰ ĐỘNG chuyển sang nạp ảnh HD 16:9 chất lượng cao
+ *   kèm hiệu ứng lia máy điện ảnh Ken Burns Pan/Zoom và luồng video dự phòng để KHÔNG BAO GIỜ bị màn hình đen!
  */
 export async function fetchVerifiedSceneMedia(
   keywordsEn: string,
@@ -497,23 +578,26 @@ export async function fetchVerifiedSceneMedia(
   videoCandidateUrls: string[];
   videoCandidateIndex: number;
   videoSourceLabel: string;
-  sourceType: 'video';
+  imageUrl?: string;
+  imageElement?: HTMLImageElement;
+  imageLoaded?: boolean;
+  sourceType: 'video' | 'wikipedia' | 'wikimedia';
 }> {
-  // 1. Translate Vietnamese narration & specialized entities into English motion-video queries + curated open CDN clips
+  const pipelineStartMs = performance.now();
+  const MAX_VIDEO_LOAD_BUDGET_MS = 5000; // Strict 5-second budget for Priority 1 video loading
+
   const translation = translateNarrationToVideoQueries(
     narrationVi || '',
     keywordsEn,
     wikipediaTopicEn
   );
 
-  // 2. Nguồn 1: Query Wikimedia Commons for matching real video/mp4 & video/webm files
   const wikimediaUrls = await searchWikimediaVideoPool(
     translation.primaryQueryEn,
     narrationVi,
     usedUrls
   );
 
-  // 3. Nguồn 2: Combine Wikimedia video results with Curated Open Stock Video CDN URLs
   const allCandidateUrls: string[] = [];
   for (const u of [...wikimediaUrls, ...translation.curatedVideoUrls]) {
     if (u && !allCandidateUrls.includes(u)) {
@@ -521,17 +605,22 @@ export async function fetchVerifiedSceneMedia(
     }
   }
 
-  // Pick starting index (if user clicked "🔄 Đổi Video Clip Khác", preferredCandidateIndex selects the next clip)
   const totalCandidates = allCandidateUrls.length;
   const startIndex =
     totalCandidates > 0 ? preferredCandidateIndex % totalCandidates : 0;
 
-  // Try loading candidate video streams starting from startIndex
+  // PRIORITY 1: Attempt real MP4/WebM video streams within the 5-second budget
   for (let offset = 0; offset < totalCandidates; offset++) {
+    const elapsedMs = performance.now() - pipelineStartMs;
+    const remainingBudgetMs = MAX_VIDEO_LOAD_BUDGET_MS - elapsedMs;
+    if (remainingBudgetMs <= 400) {
+      // Exceeded 5-second video budget -> switch immediately to Priority 2 Fallback!
+      break;
+    }
+
     const idx = (startIndex + offset) % totalCandidates;
     const candidateUrl = allCandidateUrls[idx];
 
-    // Skip already used URL on initial load (offset === 0 && preferredCandidateIndex === 0) if alternatives exist
     if (
       preferredCandidateIndex === 0 &&
       offset === 0 &&
@@ -543,7 +632,8 @@ export async function fetchVerifiedSceneMedia(
     }
 
     try {
-      const videoEl = await loadVideoWithFallback(candidateUrl, 6000);
+      const perAttemptTimeout = Math.min(2400, remainingBudgetMs);
+      const videoEl = await loadVideoWithFallback(candidateUrl, perAttemptTimeout);
       if (usedUrls) usedUrls.add(candidateUrl);
 
       const isWikimedia = candidateUrl.includes('wikimedia.org');
@@ -560,11 +650,30 @@ export async function fetchVerifiedSceneMedia(
         sourceType: 'video',
       };
     } catch {
-      // Try next video candidate in the pool
+      // Try next candidate within 5-second budget
     }
   }
 
-  // 4. Nguồn 3 Fallback: Guaranteed Real-Time Motion Video Stream (WebM/MP4 Blob Video)
+  // PRIORITY 2 SMART FALLBACK: Video took > 5s or hit CORS/404 -> Load HD 16:9 Image with Ken Burns Pan/Zoom
+  // AND attach a synthesized motion video stream for the <video> preview element so neither Canvas nor card is ever blank!
+  let fallbackImgUrl: string | undefined;
+  let fallbackImgEl: HTMLImageElement | undefined;
+
+  try {
+    const foundImgUrl = await searchHdFallbackImage(
+      translation.primaryQueryEn,
+      wikipediaTopicEn,
+      narrationVi,
+      usedUrls
+    );
+    if (foundImgUrl) {
+      fallbackImgEl = await loadImageWithFallback(foundImgUrl, 3500);
+      fallbackImgUrl = foundImgUrl;
+    }
+  } catch {
+    // Ignore and use synthesized stream
+  }
+
   const synth = await createSynthesizedMotionVideo(
     translation.matchedEntityCategory,
     sceneId,
@@ -578,14 +687,85 @@ export async function fetchVerifiedSceneMedia(
     videoElement: synth.videoElement,
     videoCandidateUrls: fallbackCandidates,
     videoCandidateIndex: fallbackCandidates.length - 1,
-    videoSourceLabel: `🎬 Video MP4/WebM Chuyển Động (${translation.primaryQueryEn})`,
-    sourceType: 'video',
+    videoSourceLabel: fallbackImgEl
+      ? `🖼️ Fallback HD 16:9 Ken Burns + Motion (${translation.primaryQueryEn})`
+      : `🎬 Video MP4/WebM Chuyển Động (${translation.primaryQueryEn})`,
+    imageUrl: fallbackImgUrl,
+    imageElement: fallbackImgEl,
+    imageLoaded: Boolean(fallbackImgEl),
+    sourceType: fallbackImgEl ? 'wikipedia' : 'video',
   };
 }
 
 /**
- * Instant handler for "🔄 Đổi Video Clip Khác":
- * Advances to the next MP4/WebM video clip in the scene's topic pool and returns the live HTMLVideoElement.
+ * Synchronization Readiness Check (Requirement 4):
+ * Waits until the scene's video (`canplaythrough` / `readyState >= 2`) or HD fallback image (`onload` / `complete`)
+ * is ready in memory before starting the Vietnamese voiceover!
+ */
+export async function waitForSceneMediaReady(
+  scene: Scene,
+  maxWaitMs: number = 3000
+): Promise<void> {
+  if (!scene) return;
+
+  // 1. If videoElement is already decoded in memory
+  if (scene.videoElement && scene.videoElement.readyState >= 2) {
+    if (scene.videoElement.paused) {
+      await scene.videoElement.play().catch(() => {});
+    }
+    return;
+  }
+
+  // 2. If HD fallback imageElement is already decoded in memory
+  if (
+    scene.imageElement &&
+    scene.imageLoaded &&
+    scene.imageElement.complete &&
+    scene.imageElement.naturalWidth > 0
+  ) {
+    return;
+  }
+
+  // 3. Wait up to maxWaitMs for video `canplaythrough`/`loadeddata` or image `onload`
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    const timer = setTimeout(done, maxWaitMs);
+
+    if (scene.videoElement) {
+      const v = scene.videoElement;
+      const onReady = () => {
+        clearTimeout(timer);
+        v.removeEventListener('canplaythrough', onReady);
+        v.removeEventListener('loadeddata', onReady);
+        v.play().catch(() => {});
+        done();
+      };
+      v.addEventListener('canplaythrough', onReady, { once: true });
+      v.addEventListener('loadeddata', onReady, { once: true });
+      v.load();
+    } else if (scene.imageElement) {
+      const img = scene.imageElement;
+      const onImgReady = () => {
+        clearTimeout(timer);
+        done();
+      };
+      img.addEventListener('load', onImgReady, { once: true });
+      img.addEventListener('error', onImgReady, { once: true });
+    } else {
+      clearTimeout(timer);
+      done();
+    }
+  });
+}
+
+/**
+ * Instant handler for "🔄 Đổi Video Clip Khác"
  */
 export async function switchSceneToNextVideoClip(
   scene: Scene,
@@ -605,7 +785,7 @@ export async function switchSceneToNextVideoClip(
       : currentIdx + 1;
 
   const res = await fetchVerifiedSceneMedia(
-    scene.search_keywords_en,
+    scene.exact_video_search_en || scene.search_keywords_en,
     scene.narration_vi,
     undefined,
     scene.visual_prompt_en,
@@ -624,7 +804,7 @@ export async function switchSceneToNextVideoClip(
 }
 
 /**
- * Generates an internal animated fallback frame for Canvas while a video element is initializing its first frame
+ * Generates an internal animated fallback frame for Canvas
  */
 export function generateProceduralBackground(
   theme: LutStyle = 'cinematic-teal-orange',

@@ -90,7 +90,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
     try {
       const translation = translateNarrationToVideoQueries(
         scene.narration_vi,
-        customKeywords ?? scene.search_keywords_en,
+        customKeywords ?? scene.exact_video_search_en ?? scene.search_keywords_en,
         scene.wikipedia_topic_en
       );
       const effectiveKeywords = customKeywords || translation.primaryQueryEn;
@@ -106,6 +106,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
       );
 
       onUpdateScene(index, {
+        exact_video_search_en: effectiveKeywords,
         search_keywords_en: effectiveKeywords,
         videoUrl: media.videoUrl,
         videoElement: media.videoElement,
@@ -113,7 +114,10 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
         videoCandidateUrls: media.videoCandidateUrls,
         videoCandidateIndex: media.videoCandidateIndex,
         videoSourceLabel: media.videoSourceLabel,
-        imageSourceType: 'video',
+        imageUrl: media.imageUrl,
+        imageElement: media.imageElement,
+        imageLoaded: Boolean(media.imageElement),
+        imageSourceType: media.sourceType,
       });
     } finally {
       setSwitchingSceneIdx(null);
@@ -228,10 +232,15 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
             >
               {/* Card Header */}
               <div className="flex items-center justify-between gap-3 mb-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="w-6 h-6 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 font-mono text-xs font-bold flex items-center justify-center">
                     {idx + 1}
                   </span>
+                  {scene.pedagogical_section && (
+                    <span className="px-2 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[10px] font-bold">
+                      {scene.pedagogical_section}
+                    </span>
+                  )}
                   <input
                     type="text"
                     value={scene.title}
@@ -311,6 +320,17 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                   <div className="relative aspect-video rounded-lg overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center group/thumb">
                     <video
                       key={scene.videoUrl || `scene_video_${idx}`}
+                      ref={(el) => {
+                        if (
+                          el &&
+                          scene.videoUrl?.startsWith('stream://') &&
+                          scene.videoElement?.srcObject &&
+                          el.srcObject !== scene.videoElement.srcObject
+                        ) {
+                          el.srcObject = scene.videoElement.srcObject;
+                          el.play().catch(() => {});
+                        }
+                      }}
                       src={
                         scene.videoUrl && !scene.videoUrl.startsWith('stream://')
                           ? scene.videoUrl

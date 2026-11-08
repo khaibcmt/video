@@ -20,6 +20,7 @@ import { Scene, ExportProgress } from '../types';
 import { CanvasRenderer } from '../services/canvasRenderer';
 import { audioEngine } from '../services/audioEngine';
 import { exportVideo, exportSrtFile, VideoExportFormat } from '../services/exporter';
+import { waitForSceneMediaReady } from '../services/mediaLoader';
 
 interface VideoPreviewPlayerProps {
   scenes: Scene[];
@@ -147,6 +148,9 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     setActiveSceneIdx(startIdx);
     onSelectScene(startIdx);
 
+    // Wait until current scene video (canplaythrough) or fallback HD image (onload) is ready in buffer
+    await waitForSceneMediaReady(scenes[startIdx], 2000);
+
     // Trigger narration for the current scene
     if (!isMuted) {
       audioEngine.playVietnameseNarration(scenes[startIdx].narration_normalized);
@@ -198,8 +202,11 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
         setActiveSceneIdx(currentIdx);
         onSelectScene(currentIdx);
 
-        if (!isMuted) {
-          audioEngine.playVietnameseNarration(scenes[currentIdx].narration_normalized);
+        const nextSceneToPlay = scenes[currentIdx];
+        if (!isMuted && nextSceneToPlay) {
+          void waitForSceneMediaReady(nextSceneToPlay, 1500).then(() => {
+            audioEngine.playVietnameseNarration(nextSceneToPlay.narration_normalized);
+          });
         }
       }
 

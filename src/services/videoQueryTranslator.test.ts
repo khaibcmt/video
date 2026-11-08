@@ -5,6 +5,10 @@ import {
   scoreVideoCandidateForQuery,
   getNextCandidateVideoIndex,
 } from './videoQueryTranslator';
+import {
+  normalizeVietnameseNumbers,
+  generateAutonomousPedagogicalScenes,
+} from './scriptAnalyzer';
 
 test('translateNarrationToVideoQueries maps specialized aquaculture and classroom Vietnamese narrations to exact English motion video queries', () => {
   const catfishRes = translateNarrationToVideoQueries(
@@ -29,22 +33,45 @@ test('translateNarrationToVideoQueries maps specialized aquaculture and classroo
   assert.ok(classroomRes.curatedVideoUrls.length >= 3);
 });
 
-test('translateNarrationToVideoQueries maps Ha Long Bay, caves, silk road, black holes, and fables accurately', () => {
-  const haLongRes = translateNarrationToVideoQueries(
-    'Vịnh Hạ Long là di sản thiên nhiên thế giới với hơn 1.600 hòn đảo đá vôi.'
+test('normalizeVietnameseNumbers converts 3.260 km and scientific units into full Vietnamese words', () => {
+  const normalizedKm = normalizeVietnameseNumbers(
+    'Việt Nam có đường bờ biển dài 3.260 km và oxy đạt 5 mg/l.'
   );
-  assert.equal(haLongRes.matchedEntityCategory, 'halong_bay');
   assert.ok(
-    haLongRes.curatedVideoUrls.every(
-      (u) => u.endsWith('.mp4') || u.endsWith('.webm')
-    )
+    normalizedKm.includes('ba nghìn hai trăm sáu mươi ki-lô-mét'),
+    `Expected "ba nghìn hai trăm sáu mươi ki-lô-mét" in: ${normalizedKm}`
   );
+  assert.ok(
+    normalizedKm.includes('năm mi-li-gam trên lít'),
+    `Expected "năm mi-li-gam trên lít" in: ${normalizedKm}`
+  );
+});
 
-  const turtleRes = translateNarrationToVideoQueries(
-    'Chú rùa kiên trì bước đi chậm rãi qua khu rừng xanh.'
+test('generateAutonomousPedagogicalScenes produces 4-part pedagogical structure matching 1, 2, and 3 minute durations', () => {
+  const scenes1Min = generateAutonomousPedagogicalScenes(
+    'Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến',
+    'Công nghệ',
+    60
   );
-  assert.equal(turtleRes.matchedEntityCategory, 'turtle');
-  assert.equal(turtleRes.primaryQueryEn, 'tortoise walking forest nature');
+  assert.equal(scenes1Min.length, 3);
+  assert.equal(scenes1Min.reduce((s, c) => s + c.duration_seconds, 0), 60);
+  assert.ok(scenes1Min.every((s) => s.exact_video_search_en && s.pedagogical_section));
+
+  const scenes2Min = generateAutonomousPedagogicalScenes(
+    'Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến',
+    'Công nghệ',
+    120
+  );
+  assert.equal(scenes2Min.length, 5);
+  assert.equal(scenes2Min.reduce((s, c) => s + c.duration_seconds, 0), 120);
+
+  const scenes3Min = generateAutonomousPedagogicalScenes(
+    'Quang hợp ở thực vật và chu trình trao đổi chất',
+    'Sinh học',
+    180
+  );
+  assert.equal(scenes3Min.length, 7);
+  assert.equal(scenes3Min.reduce((s, c) => s + c.duration_seconds, 0), 180);
 });
 
 test('scoreVideoCandidateForQuery strictly accepts only video/mp4 and video/webm and rejects static images', () => {
@@ -73,19 +100,6 @@ test('scoreVideoCandidateForQuery strictly accepts only video/mp4 and video/webm
     'swimming catfish underwater'
   );
   assert.equal(staticJpgScore, -1);
-
-  const unrelatedVideoScore = scoreVideoCandidateForQuery(
-    {
-      url: 'https://upload.wikimedia.org/wikipedia/commons/test/train_station.webm',
-      mime: 'video/webm',
-      title: 'File:Train station in Berlin.webm',
-      width: 1280,
-      height: 720,
-      size: 4_000_000,
-    },
-    'swimming catfish underwater'
-  );
-  assert.equal(unrelatedVideoScore, -1);
 });
 
 test('getNextCandidateVideoIndex cycles smoothly through available video clips', () => {

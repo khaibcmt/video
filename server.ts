@@ -119,9 +119,17 @@ async function startServer() {
     }
   });
 
-  // Gemini API Endpoint with Multi-Key Support and structured JSON
+  // Gemini API Endpoint with Multi-Key Support and 4-Part Pedagogical AI Director structured JSON
   app.post('/api/gemini/generate', async (req, res) => {
-    const { apiKey, model = 'gemini-3.8-flash', thinkingLevel, prompt, targetDurationSec = 60 } = req.body;
+    const {
+      apiKey,
+      model = 'gemini-3.8-flash',
+      thinkingLevel,
+      topicTitle = '',
+      subject = 'Sinh học',
+      prompt = '',
+      targetDurationSec = 120,
+    } = req.body;
 
     const effectiveApiKey = apiKey || process.env.GEMINI_API_KEY;
 
@@ -150,54 +158,68 @@ async function startServer() {
       else if (thinkingLevel === 'medium') chosenThinkingLevel = ThinkingLevel.MEDIUM;
       else if (thinkingLevel === 'high') chosenThinkingLevel = ThinkingLevel.HIGH;
 
-      const durationSec = Math.max(30, Math.min(300, Number(targetDurationSec) || 60));
+      const durationSec = Math.max(30, Math.min(300, Number(targetDurationSec) || 120));
+      const targetSceneCount = durationSec <= 75 ? 3 : durationSec <= 150 ? 5 : 7;
       const targetMin = Math.floor(durationSec / 60);
       const targetSecRemainder = durationSec % 60;
       const durationDisplay = `${targetMin > 0 ? `${targetMin} phút ` : ''}${targetSecRemainder > 0 ? `${targetSecRemainder} giây` : ''}`;
 
-      const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Chuyên gia Biên kịch Hình ảnh Hàng đầu.
-Nhiệm vụ của bạn là nhận kịch bản hoặc câu chuyện từ người dùng và phân tích thành các phân cảnh điện ảnh (scenes) đồng cấu 100% giữa lời kể và hình ảnh minh họa.
+      const systemInstruction = `Bạn là Đạo Diễn Sư Phạm AI Tự Động (Autonomous Pedagogical Video Director) chuyên nghiệp cho môn ${subject}.
+Nhiệm vụ của bạn là nhận Tên bài học / Chủ đề (và kịch bản gợi ý nếu có) từ người dùng và tự động biên soạn kịch bản bài giảng video chuyển động theo CẤU TRÚC 4 PHẦN SƯ PHẠM CHUẨN gồm đúng ${targetSceneCount} phân cảnh (scenes) cho tổng thời lượng ${durationSec} giây (~${durationDisplay}):
+- Phần 1: Mở đầu & Đặt vấn đề (Khởi động hấp dẫn)
+- Phần 2: Khám phá Kiến thức Trọng tâm 1 (Phân loại / Bản chất khoa học)
+- Phần 3: Khám phá Kiến thức Trọng tâm 2 (Quy trình / Cơ chế / Phương thức kỹ thuật)
+- Phần 4: Ứng dụng Thực tiễn & Tổng kết Bài học
 
 CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
-1. KHỚP ĐỘ DÀI MỤC TIÊU & NHỊP ĐỌC LƯU LOÁT:
-   - Tổng độ dài video người dùng yêu cầu là: ${durationSec} GIÂY (~${durationDisplay}). Tối đa là 5 phút (300 giây).
-   - Mỗi phân cảnh nên có từ 1 đến 2 câu lời bình mạch lạc, giàu hình ảnh (khoảng 18 đến 38 từ mỗi cảnh) để giọng đọc lồng tiếng phát âm trôi chảy, lưu loát, tự nhiên, không bị hụt hơi hay vấp chữ.
-   - Tổng thời lượng các phân cảnh cộng lại xấp xỉ bằng ${durationSec} giây.
+1. KHỚP ĐỘ DÀI MỤC TIÊU & NHỊP ĐỌC SƯ PHẠM LƯU LOÁT:
+   - Tổng độ dài video yêu cầu là: ${durationSec} GIÂY (~${targetSceneCount} cảnh).
+   - Mỗi phân cảnh có 1-2 câu giảng bài mạch lạc, giàu hình ảnh thực tế (khoảng 22 đến 38 từ mỗi cảnh) để giọng đọc thuyết minh tiếng Việt phát âm trôi chảy, tự nhiên.
 
 2. LƯỢC BỎ TỪ KHÔNG LIÊN QUAN ĐẾN LỜI THOẠI:
-   - Trong 'narration_vi': TUYỆT ĐỐI LOẠI BỎ mọi ghi chú kỹ thuật, hướng dẫn đạo diễn, ký hiệu kịch bản như "[Cảnh 1]", "(Nhạc nền du dương)", "MC:", "Người dẫn chuyện:", "Hình ảnh:...", các câu lệnh chỉ dẫn của người dùng.
-   - CHỈ GIỮ LẠI LỜI BÌNH / LỜI THOẠI NGUYÊN BẢN trong trẻo, tự nhiên, truyền cảm để đọc và hiển thị phụ đề.
+   - Trong 'narration_vi': TUYỆT ĐỐI LOẠI BỎ mọi ghi chú kỹ thuật, hướng dẫn đạo diễn như "[Cảnh 1]", "(Nhạc nền)", "MC:", "Giáo viên:". Chỉ giữ lại lời giảng nguyên bản.
 
-3. ĐỒNG CẤU VIDEO CHUYỂN ĐỘNG THẬT 100% (search_keywords_en, visual_prompt_en, wikipedia_topic_en):
-   - Toàn bộ phân cảnh BẮT BUỘC sử dụng VIDEO CHUYỂN ĐỘNG THẬT (MP4/WebM), tuyệt đối không dùng ảnh tĩnh.
-   - Nếu câu thoại nói về sinh vật, thiết bị hay bối cảnh nào, 'search_keywords_en' PHẢI dịch chính xác sang cụm từ khóa truy vấn video chuyển động tiếng Anh chuyên ngành của đúng thực thể đó (ví dụ: "swimming catfish underwater", "shrimp pond aerator splashing", "modern high school classroom discussion", "Ha Long Bay Vietnam aerial boat", "tortoise walking forest nature").
-   - 'visual_prompt_en': Mô tả cảnh quay video 16:9 chuyển động bằng tiếng Anh khớp 100% với hành động trong câu thoại.
-   - 'wikipedia_topic_en': Chủ đề thực thể tiếng Anh tương ứng (ví dụ: "Catfish", "Shrimp farming", "Hạ Long Bay", "Black hole").
+3. TRÍCH XUẤT 'exact_video_search_en' & ĐỒNG CẤU VIDEO CHUYỂN ĐỘNG THẬT 100%:
+   - 'exact_video_search_en': 2-3 từ khóa tiếng Anh CỰC KỲ CỤ THỂ về chủ thể chuyển động thực tế trong cảnh (ví dụ: "swimming catfish underwater", "shrimp pond aerator splashing", "modern high school classroom discussion", "scientist laboratory microscope research", "Ha Long Bay Vietnam aerial boat").
+   - 'search_keywords_en': Đặt trùng hoặc bổ trợ sát với 'exact_video_search_en'.
+   - 'visual_prompt_en': 1 câu mô tả khung hình 16:9 bằng tiếng Anh chi tiết cho cơ chế Fallback ảnh HD Ken Burns nếu video tải quá 5 giây.
+   - 'wikipedia_topic_en': Chủ đề thực thể tiếng Anh chuẩn trên Wikipedia liên quan trực tiếp đến cảnh đó.
 
 4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ THÀNH CHỮ TIẾNG VIỆT (narration_normalized):
-   - TỰ ĐỘNG CHUYỂN ĐỔI 100% các con số, ngày tháng, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy phát âm chuẩn xác, không bị khựng.
-     Ví dụ: "3.260 km" -> "ba nghìn hai trăm sáu mươi ki-lô-mét", "160" -> "một trăm sáu mươi", "1975" -> "năm một nghìn chín trăm bảy mươi lăm".
-`;
+   - TỰ ĐỘNG CHUYỂN ĐỔI 100% các con số, ký hiệu, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy phát âm chuẩn xác ("3.260 km" -> "ba nghìn hai trăm sáu mươi ki-lô-mét", "5 mg/l" -> "năm mi-li-gam trên lít").`;
+
+      const combinedContents = `Tên bài học / Chủ đề: "${topicTitle || prompt}"
+Môn học: ${subject}
+Thời lượng mục tiêu: ${durationSec} giây (~${targetSceneCount} phân cảnh)
+Nội dung chi tiết / Yêu cầu thêm: ${prompt || topicTitle}`;
 
       const config: any = {
         systemInstruction,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.ARRAY,
-          description: 'Danh sách phân cảnh video đồng cấu nội dung và hình ảnh',
+          description: 'Danh sách phân cảnh bài giảng sư phạm 4 phần chuẩn',
           items: {
             type: Type.OBJECT,
             properties: {
               scene_id: { type: Type.INTEGER, description: 'Số thứ tự phân cảnh' },
               title: { type: Type.STRING, description: 'Tiêu đề ngắn của phân cảnh' },
-              narration_vi: { type: Type.STRING, description: 'Lời bình gốc tiếng Việt' },
+              pedagogical_section: {
+                type: Type.STRING,
+                description: 'Phần sư phạm (Phần 1: Mở đầu, Phần 2: Kiến thức 1, Phần 3: Kiến thức 2, Phần 4: Ứng dụng & Tổng kết)',
+              },
+              narration_vi: { type: Type.STRING, description: 'Lời giảng gốc tiếng Việt' },
               narration_normalized: {
                 type: Type.STRING,
-                description: 'Lời bình đã chuẩn hóa số và đơn vị thành chữ tiếng Việt',
+                description: 'Lời giảng đã chuẩn hóa 100% số và đơn vị thành chữ tiếng Việt',
+              },
+              exact_video_search_en: {
+                type: Type.STRING,
+                description: '2-3 từ khóa tiếng Anh cực kỳ cụ thể về chủ thể chuyển động thực tế',
               },
               visual_prompt_en: {
                 type: Type.STRING,
-                description: 'Mô tả chi tiết khung hình 16:9 bằng tiếng Anh khớp 100% hành động và nhân vật trong câu thoại',
+                description: 'Mô tả chi tiết khung hình 16:9 HD bằng tiếng Anh khớp 100% nội dung cảnh',
               },
               search_keywords_en: {
                 type: Type.STRING,
@@ -210,7 +232,7 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
               camera_motion: {
                 type: Type.STRING,
                 enum: ['zoom-in', 'zoom-out', 'pan-left', 'pan-right'],
-                description: 'Hiệu ứng chuyển động máy quay',
+                description: 'Hiệu ứng chuyển động máy quay Ken Burns',
               },
               lut_style: {
                 type: Type.STRING,
@@ -221,8 +243,10 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
             required: [
               'scene_id',
               'title',
+              'pedagogical_section',
               'narration_vi',
               'narration_normalized',
+              'exact_video_search_en',
               'visual_prompt_en',
               'search_keywords_en',
               'wikipedia_topic_en',
@@ -239,7 +263,7 @@ CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
 
       const response = await ai.models.generateContent({
         model,
-        contents: prompt,
+        contents: combinedContents,
         config,
       });
 
