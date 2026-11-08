@@ -24,122 +24,247 @@ const imageCache = new Map<string, HTMLImageElement>();
 const videoCache = new Map<string, HTMLVideoElement>();
 const proceduralCache = new Map<string, HTMLCanvasElement>();
 
-// Detect static hosting environments (like GitHub Pages)
+// Detect static hosting environments (only GitHub Pages or local file protocol)
 const isStaticHost =
   typeof window !== 'undefined' &&
   (window.location.hostname.includes('github.io') ||
-    window.location.protocol === 'file:' ||
-    (window.location.port !== '3000' && !window.location.hostname.includes('run.app')));
+    window.location.protocol === 'file:');
 
 /**
- * Rich Vietnamese-to-English visual subject & entity dictionary
- * Covers animals, fables, landscapes, history, science, daily life, and culture.
+ * Comprehensive Vietnamese-to-English visual subject & action dictionary
+ * Ensures direct extraction of accurate English search keywords from Vietnamese narration (`narration_vi`).
  */
 const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
   // Animals & Fables (Truyện ngụ ngôn, cổ tích, thế giới động vật)
-  'rùa': 'tortoise turtle nature',
-  'con rùa': 'tortoise walking forest nature',
+  'rùa và thỏ': 'tortoise and hare rabbit nature',
+  'con rùa': 'tortoise turtle walking forest',
   'rùa biển': 'sea turtle swimming coral reef',
-  'thỏ': 'wild rabbit hare meadow nature',
-  'con thỏ': 'rabbit running grass forest',
-  'cáo': 'red fox forest wildlife',
+  'chú rùa': 'tortoise walking nature',
+  'rùa': 'tortoise turtle wildlife',
+  'con thỏ': 'wild rabbit hare running meadow',
+  'chú thỏ': 'rabbit hare grass forest',
+  'thỏ': 'wild rabbit hare nature',
+  'con cáo': 'red fox forest wildlife',
+  'cáo': 'red fox wildlife',
   'sư tử': 'lion savanna wildlife',
-  'hổ': 'tiger jungle wildlife',
-  'voi': 'elephant herd nature',
+  'chúa sơn lâm': 'tiger lion jungle wildlife',
+  'con hổ': 'tiger jungle wildlife',
+  'hổ': 'tiger wildlife',
+  'đàn voi': 'elephant herd nature',
+  'con voi': 'elephant nature wildlife',
+  'voi': 'elephant wildlife',
   'khỉ': 'monkey macaque forest trees',
-  'chim': 'bird flying tree branch nature',
-  'đại bàng': 'eagle soaring mountain sky',
+  'đàn chim': 'flock of birds flying sky',
+  'chim đại bàng': 'eagle soaring mountain sky',
+  'đại bàng': 'eagle soaring sky',
+  'chim bồ câu': 'white dove pigeon flying',
+  'chim công': 'peacock colorful feathers',
+  'chim': 'bird nature tree branch',
   'cá heo': 'dolphin swimming ocean waves',
   'cá voi': 'whale deep blue ocean',
-  'ong': 'honeybee flower pollination',
-  'kiến': 'ants working leaf nature',
-  'ếch': 'green frog lotus leaf pond',
-  'trâu': 'water buffalo rice paddy Vietnam',
-  'ngựa': 'horse galloping meadow',
-  'cừu': 'sheep flock green hill',
-  'sói': 'gray wolf forest nature',
-  'rắn': 'snake reptile jungle',
+  'đàn cá': 'school of fish coral reef underwater',
+  'ong mật': 'honeybee flower pollination',
+  'đàn ong': 'honeybee hive flower',
+  'đàn kiến': 'ants working leaf nature',
+  'con ếch': 'green frog lotus leaf pond',
+  'con trâu': 'water buffalo rice paddy Vietnam',
+  'đàn trâu': 'water buffalo countryside Vietnam',
+  'con ngựa': 'horse galloping meadow',
+  'đàn cừu': 'sheep flock green hill',
+  'chó sói': 'gray wolf forest nature',
+  'con sói': 'gray wolf forest',
   'bướm': 'butterfly flower garden',
-  'cò': 'white egret heron rice field',
+  'cánh cò': 'white egret heron rice field',
+  'con cò': 'white egret rice paddy',
+  'gà trống': 'rooster farm sunrise',
+  'con mèo': 'cat domestic pet',
+  'con chó': 'loyal dog running nature',
 
   // Landscapes & Vietnam Heritage
-  'hạ long': 'Ha Long Bay Vietnam aerial',
   'vịnh hạ long': 'Ha Long Bay limestone islands',
+  'hạ long': 'Ha Long Bay Vietnam aerial',
+  'động thiên cung': 'Thien Cung Cave stalactites Ha Long',
   'thiên cung': 'Thien Cung Cave stalactites',
-  'sửng sốt': 'Sung Sot Cave Ha Long',
-  'làng chài': 'floating fishing village Vietnam',
-  'hồ gươm': 'Hoan Kiem Lake Turtle Tower Hanoi',
+  'hang sửng sốt': 'Sung Sot Cave Ha Long Bay',
+  'sửng sốt': 'Sung Sot Cave stalactites',
+  'làng chài': 'floating fishing village Ha Long Bay Vietnam',
+  'hồ hoàn kiếm': 'Hoan Kiem Lake Turtle Tower Hanoi',
+  'hồ gươm': 'Hoan Kiem Lake Hanoi',
+  'tháp rùa': 'Turtle Tower Hoan Kiem Lake Hanoi',
+  'cầu thê húc': 'The Huc Bridge Hoan Kiem Lake Hanoi',
   'hà nội': 'Hanoi Old Quarter Hoan Kiem Lake',
-  'sài gòn': 'Ho Chi Minh City skyline',
-  'hồ chí minh': 'Ho Chi Minh City landmark',
-  'đà nẵng': 'Golden Bridge Ba Na Hills Da Nang',
-  'hội an': 'Hoi An ancient town lanterns',
-  'huế': 'Imperial City Hue Citadel Vietnam',
-  'sapa': 'Sapa terraced rice fields mountains',
-  'ruộng bậc thang': 'terraced rice fields Mu Cang Chai',
-  'tây nguyên': 'Central Highlands Vietnam coffee',
-  'buôn ma thuột': 'Buon Ma Thuot coffee plantation',
-  'cà phê': 'coffee beans plantation harvest',
-  'phin cà phê': 'Vietnamese drip phin coffee',
-  'phở': 'Vietnamese Pho noodle soup',
-  'bánh mì': 'Vietnamese Banh Mi sandwich',
+  'tp hồ chí minh': 'Ho Chi Minh City skyline',
+  'sài gòn': 'Ho Chi Minh City skyline river',
+  'cầu vàng': 'Golden Bridge Ba Na Hills Da Nang',
+  'bà nà': 'Ba Na Hills Da Nang cable car',
+  'đà nẵng': 'Dragon Bridge Da Nang coastline',
+  'phố cổ hội an': 'Hoi An ancient town lanterns river',
+  'hội an': 'Hoi An ancient town yellow houses lanterns',
+  'cố đô huế': 'Imperial City Hue Citadel Vietnam',
+  'kinh thành huế': 'Imperial City Hue Vietnam',
+  'sông hương': 'Perfume River Hue Trang Tien Bridge',
+  'sapa': 'Sapa terraced rice fields mountains Vietnam',
+  'mù cang chải': 'Mu Cang Chai terraced rice fields',
+  'ruộng bậc thang': 'terraced rice fields mountains Vietnam',
+  'tây nguyên': 'Central Highlands Vietnam coffee waterfall',
+  'buôn ma thuột': 'Buon Ma Thuot coffee plantation Vietnam',
+  'nhà rông': 'Rong house Central Highlands Vietnam',
+  'cồng chiêng': 'Gong culture Central Highlands Vietnam',
+  'cà phê': 'coffee beans plantation roasted coffee',
+  'phin cà phê': 'Vietnamese drip phin coffee cup',
+  'phở': 'Vietnamese Pho noodle soup bowl',
+  'bánh mì': 'Vietnamese Banh Mi crispy baguette',
   'áo dài': 'Vietnamese Ao Dai traditional dress',
-  'tết': 'Lunar New Year peach blossom Vietnam',
-  'trống đồng': 'Dong Son bronze drum Vietnam',
-  'tơ lụa': 'Silk Road camel caravan desert',
-  'lạc đà': 'camel caravan desert dunes',
-  'sa mạc': 'sand dunes desert sunset',
-  'hố đen': 'black hole accretion disk space',
-  'vũ trụ': 'deep space galaxy nebula stars',
-  'ngân hà': 'Milky Way galaxy night sky',
-  'mặt trời': 'Sun solar flare astronomy',
-  'trái đất': 'Planet Earth from space',
-  'mặt trăng': 'Full Moon craters astronomy',
-  'rừng': 'sunlight forest trees nature',
-  'khu rừng': 'green forest trees nature',
-  'biển': 'turquoise ocean waves coral reef',
-  'đại dương': 'deep blue ocean marine life',
-  'núi': 'majestic mountain peaks clouds',
-  'dòng sông': 'scenic river flowing valley nature',
-  'con suối': 'forest stream waterfall rocks',
-  'thác nước': 'waterfall cascade tropical forest',
-  'cánh đồng': 'green rice field countryside sunrise',
+  'nón lá': 'Vietnamese conical hat Non La',
+  'tết nguyên đán': 'Vietnamese Lunar New Year Tet peach blossom',
+  'hoa đào': 'pink peach blossom flower spring',
+  'hoa mai': 'yellow apricot blossom flower Vietnam',
+  'hoa sen': 'pink lotus flower pond Vietnam',
+  'đầm sen': 'lotus pond green leaves',
+  'trống đồng': 'Dong Son bronze drum ancient Vietnam',
+  'con đường tơ lụa': 'Silk Road camel caravan desert dunes',
+  'tơ lụa': 'Silk Road caravan ancient trade',
+  'đoàn lạc đà': 'camel caravan desert sand dunes',
+  'lạc đà': 'camel desert dunes sunset',
+  'sa mạc': 'desert sand dunes golden sun',
+
+  // Science, Space, Nature & Environment
+  'hố đen': 'supermassive black hole accretion disk space',
+  'chân trời sự kiện': 'black hole event horizon gravitational lensing',
+  'thuyết tương đối': 'Albert Einstein general relativity spacetime',
+  'albert einstein': 'Albert Einstein physicist portrait',
+  'einstein': 'Albert Einstein scientist',
+  'vũ trụ': 'deep space galaxy nebula stars cosmos',
+  'dải ngân hà': 'Milky Way galaxy night sky stars',
+  'ngân hà': 'Milky Way galaxy cosmos',
+  'hệ mặt trời': 'Solar System planets orbit sun',
+  'mặt trời': 'Sun solar flare astronomy space',
+  'trái đất': 'Planet Earth from space blue marble',
+  'mặt trăng': 'Full Moon craters night sky',
+  'sao hỏa': 'Mars red planet space astronomy',
+  'thiên thạch': 'asteroid meteor deep space',
+  'kính thiên văn': 'space telescope observatory astronomy',
+  'rừng mưa nhiệt đới': 'tropical rainforest lush canopy waterfall',
+  'khu rừng': 'sunlight green forest trees nature',
+  'rừng già': 'ancient forest tall trees sunlight',
+  'rừng': 'green forest trees nature',
+  'đại dương': 'deep blue ocean underwater marine life',
+  'rạn san hô': 'colorful coral reef underwater fish',
+  'bãi biển': 'tropical sandy beach turquoise ocean waves',
+  'biển': 'turquoise ocean waves coastline',
+  'đỉnh núi': 'majestic mountain peak clouds sunrise',
+  'dãy núi': 'mountain range valley landscape',
+  'núi': 'majestic mountain peaks nature',
+  'dòng sông': 'scenic river flowing green valley',
+  'con suối': 'clear forest stream rocks nature',
+  'thác nước': 'majestic waterfall tropical forest',
+  'cánh đồng lúa': 'green rice paddy field countryside Vietnam',
+  'đồng lúa': 'golden rice field harvest countryside',
+  'cánh đồng': 'green meadow field sunrise',
   'ngôi làng': 'peaceful countryside village nature',
-  'sông mê kông': 'Mekong Delta floating market boats',
-  'miền tây': 'Mekong Delta river boats Vietnam',
-  'chùa một cột': 'One Pillar Pagoda Hanoi',
-  'văn miếu': 'Temple of Literature Hanoi',
-  'phong nha': 'Phong Nha Cave underground river',
-  'sơn đoòng': 'Son Doong Cave giant cavern',
-  'ninh bình': 'Trang An Ninh Binh karst river',
-  'tràng an': 'Trang An boat tour limestone',
-  'phú quốc': 'Phu Quoc island beach palm trees',
-  'nha trang': 'Nha Trang beach bay island',
-  'đà lạt': 'Da Lat pine forest misty lake',
-  'lịch sử': 'ancient historical monument citadel',
-  'công nghệ': 'modern technology microchip circuit',
-  'trí tuệ nhân tạo': 'artificial intelligence robotics',
-  'y tế': 'medical science laboratory doctor',
-  'giáo dục': 'university library books students',
-  'nông nghiệp': 'green rice paddy field farmers',
+  'đồng bằng sông cửu long': 'Mekong Delta floating market river Vietnam',
+  'sông mê kông': 'Mekong River boats delta',
+  'chợ nổi': 'Cai Rang floating market boats Mekong Delta',
+  'miền tây': 'Mekong Delta river palm trees boats',
+  'chùa một cột': 'One Pillar Pagoda Hanoi Vietnam',
+  'văn miếu': 'Temple of Literature Hanoi Khue Van Cac',
+  'phong nha': 'Phong Nha Cave underground river boat',
+  'sơn đoòng': 'Son Doong Cave giant cavern sunlight',
+  'ninh bình': 'Trang An Ninh Binh limestone river boats',
+  'tràng an': 'Trang An Ninh Binh karst landscape',
+  'tam cốc': 'Tam Coc Ninh Binh river rice fields',
+  'phú quốc': 'Phu Quoc island beach palm trees sunset',
+  'nha trang': 'Nha Trang beach bay turquoise water',
+  'đà lạt': 'Da Lat pine forest misty lake flowers',
+  'thác bản giốc': 'Ban Gioc Waterfall Cao Bang Vietnam',
+  'hồ ba bể': 'Ba Be Lake emerald water mountains',
+
+  // History, Technology, Education, Health, Daily actions
+  'lịch sử': 'historical monument ancient citadel architecture',
+  'hoàng thành thăng long': 'Imperial Citadel of Thang Long Hanoi',
+  'trí tuệ nhân tạo': 'artificial intelligence neural network technology',
+  'công nghệ': 'modern technology digital innovation circuit',
+  'máy tính': 'modern computer technology workspace',
+  'robot': 'humanoid robot futuristic technology',
+  'y tế': 'medical hospital doctor healthcare laboratory',
+  'bác sĩ': 'doctor stethoscope medical hospital',
+  'ADN': 'DNA double helix genetics science',
+  'tế bào': 'microscopic biological cells science',
+  'giáo dục': 'students classroom university library books',
+  'trường học': 'school classroom students learning',
+  'đọc sách': 'reading book library knowledge',
+  'nông nghiệp': 'farmers green rice field agriculture',
+  'năng lượng mặt trời': 'solar panels renewable energy farm',
+  'điện gió': 'wind turbines green energy landscape',
+  'chạy đua': 'running race track competition nature',
+  'về đích': 'finish line victory celebration',
+  'ngủ quên': 'sleeping resting under tree nature',
+  'kiên trì': 'climbing mountain perseverance sunrise',
 };
 
 /**
- * Extracts fallback English visual keywords from Vietnamese text
+ * Extracts English visual keywords directly from Vietnamese narration text (`narration_vi`).
+ * Sorts dictionary keys by length descending so multi-word Vietnamese phrases match first!
  */
 export function extractVisualKeywordsFromVietnamese(viText: string): string | null {
   if (!viText) return null;
   const lower = viText.toLowerCase();
   const matchedTerms: string[] = [];
 
-  for (const [viKey, enVal] of Object.entries(VIETNAMESE_TO_ENGLISH_VISUAL_MAP)) {
+  const sortedEntries = Object.entries(VIETNAMESE_TO_ENGLISH_VISUAL_MAP).sort(
+    (a, b) => b[0].length - a[0].length
+  );
+
+  for (const [viKey, enVal] of sortedEntries) {
     if (lower.includes(viKey)) {
-      matchedTerms.push(enVal);
+      if (!matchedTerms.includes(enVal)) {
+        matchedTerms.push(enVal);
+      }
       if (matchedTerms.length >= 2) break;
     }
   }
 
   return matchedTerms.length > 0 ? matchedTerms.join(' ') : null;
+}
+
+/**
+ * Extracts core Vietnamese noun phrases directly from `narration_vi`
+ * so we can search Vietnamese Wikipedia (`vi.wikipedia.org`) and Wikimedia Commons directly from the dialogue.
+ */
+export function extractVietnameseCoreTopic(narrationVi: string): string {
+  if (!narrationVi) return '';
+  const lower = narrationVi.toLowerCase();
+
+  // 1. Check if any known Vietnamese entity phrase appears in the narration
+  const sortedViKeys = Object.keys(VIETNAMESE_TO_ENGLISH_VISUAL_MAP).sort(
+    (a, b) => b.length - a.length
+  );
+  const foundKeys: string[] = [];
+  for (const k of sortedViKeys) {
+    if (lower.includes(k)) {
+      foundKeys.push(k);
+      if (foundKeys.length >= 2) break;
+    }
+  }
+  if (foundKeys.length > 0) {
+    return foundKeys.join(' ');
+  }
+
+  // 2. Otherwise remove common Vietnamese stop/filler words and keep meaningful subject words
+  const stopWords = new Set([
+    'là', 'của', 'và', 'những', 'các', 'một', 'trong', 'trên', 'dưới', 'với',
+    'được', 'có', 'không', 'đã', 'đang', 'sẽ', 'này', 'đó', 'khi', 'như',
+    'về', 'từ', 'đến', 'cho', 'tại', 'bởi', 'vì', 'nên', 'nhưng', 'mà',
+    'rất', 'hơn', 'nhất', 'cùng', 'theo', 'qua', 'lại', 'ra', 'vào', 'lên',
+    'xuống', 'nơi', 'đây', 'mỗi', 'năm', 'ngày', 'tháng', 'lượt', 'hàng',
+  ]);
+
+  const cleanTokens = narrationVi
+    .replace(/[.,;!?()"'“”‘’\-–—]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !stopWords.has(w.toLowerCase()) && !/^\d+$/.test(w));
+
+  return cleanTokens.slice(0, 5).join(' ');
 }
 
 /**
@@ -178,6 +303,8 @@ function sanitizeSearchKeywords(raw: string): string {
           'illustration',
           'wide',
           'angle',
+          'background',
+          'style',
         ].includes(w.toLowerCase())
     )
     .slice(0, 5)
@@ -185,8 +312,9 @@ function sanitizeSearchKeywords(raw: string): string {
 }
 
 /**
- * TIER 0: Search Wikimedia Commons for REAL HD Video Footage (.webm / .mp4 / .ogv)
- * matching the scene's subject so the scene renders live motion video!
+ * TIER 0: Search Wikimedia Commons for REAL HD Video Footage (.webm / .mp4)
+ * STRICT HOMOLOGY RULE: Only returns a video if its title/subject strictly matches
+ * the primary tokens derived from `narration_vi` and `keyword`.
  */
 export async function searchWikimediaVideoFootage(
   keyword: string,
@@ -199,7 +327,7 @@ export async function searchWikimediaVideoFootage(
       const searchExpr = `${queryStr.trim()} filetype:video`;
       const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
         searchExpr
-      )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime|dimensions|size&gsrlimit=12&format=json&origin=*`;
+      )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime|dimensions|size&gsrlimit=15&format=json&origin=*`;
 
       const res = await fetch(endpoint, {
         headers: { Accept: 'application/json' },
@@ -214,6 +342,11 @@ export async function searchWikimediaVideoFootage(
         .split(/\s+/)
         .filter((t) => t.length > 2);
 
+      if (queryTokens.length === 0) return null;
+
+      // Require at least 2 matching tokens when query has 2+ tokens so unrelated videos are rejected!
+      const minRequiredMatches = queryTokens.length >= 2 ? 2 : 1;
+
       const candidates: WikimediaVideoResult[] = [];
 
       Object.values(pages).forEach((page: any) => {
@@ -227,7 +360,7 @@ export async function searchWikimediaVideoFootage(
         const height: number = info.height || 720;
         const size: number = info.size || 0;
 
-        // Only accept browser-playable WebM or MP4 video streams under 38MB for fast loading
+        // Only accept browser-playable WebM or MP4 video streams under 38MB
         if (
           !(
             mime.includes('webm') ||
@@ -241,7 +374,7 @@ export async function searchWikimediaVideoFootage(
         if (size > 38_000_000) return;
         if (width < 480 || height < 270) return;
 
-        // Exclude spoken interviews, animations of diagrams, maps, or logos
+        // Exclude spoken interviews, animations of diagrams, maps, logos, or people talking
         if (
           title.includes('interview') ||
           title.includes('speech') ||
@@ -249,7 +382,13 @@ export async function searchWikimediaVideoFootage(
           title.includes('tutorial') ||
           title.includes('screencast') ||
           title.includes('diagram') ||
-          title.includes('map')
+          title.includes('map') ||
+          title.includes('conference') ||
+          title.includes('wikimedia') ||
+          title.includes('wikimania') ||
+          title.includes('user ') ||
+          title.includes('pronunciation') ||
+          title.includes('sign language')
         ) {
           return;
         }
@@ -259,23 +398,26 @@ export async function searchWikimediaVideoFootage(
         for (const token of queryTokens) {
           if (title.includes(token)) {
             matchedTokens++;
-            score += 20;
+            score += 25;
           }
         }
-        if (matchedTokens === 0) return;
+
+        // Strict homology check: reject video if it doesn't match the required subject tokens
+        if (matchedTokens < minRequiredMatches) return;
 
         const aspect = width / height;
         if (aspect >= 1.25 && aspect <= 2.2) {
           score += 30;
+        } else {
+          score -= 20;
         }
 
-        // Prefer compact fast-streaming HD clips (1MB - 18MB)
-        if (size > 500_000 && size < 18_000_000) {
+        if (size > 500_000 && size < 20_000_000) {
           score += 15;
         }
 
         if (usedUrls && usedUrls.has(url)) {
-          score -= 150;
+          score -= 200;
         }
 
         candidates.push({
@@ -288,7 +430,7 @@ export async function searchWikimediaVideoFootage(
         });
       });
 
-      const valid = candidates.filter((c) => c.score > 0);
+      const valid = candidates.filter((c) => c.score >= 40);
       if (valid.length === 0) return null;
 
       valid.sort((a, b) => b.score - a.score);
@@ -300,22 +442,26 @@ export async function searchWikimediaVideoFootage(
     }
   };
 
+  // Prioritize keywords extracted directly from the Vietnamese narration (`narration_vi`) first!
   const queries: string[] = [];
-  const mappedVi = extractVisualKeywordsFromVietnamese(narrationVi || '');
+  const mappedFromNarration = extractVisualKeywordsFromVietnamese(narrationVi || '');
   const cleanedEn = sanitizeSearchKeywords(keyword || '');
 
-  if (cleanedEn) {
-    const words = cleanedEn.split(' ');
-    if (words.length >= 2) {
-      queries.push(words.slice(0, 2).join(' '));
+  if (mappedFromNarration) {
+    const narrationWords = mappedFromNarration.split(/\s+/);
+    if (narrationWords.length >= 2) {
+      queries.push(narrationWords.slice(0, 2).join(' '));
     }
-    queries.push(cleanedEn);
+    queries.push(mappedFromNarration);
   }
-  if (mappedVi) {
-    const viWords = mappedVi.split(' ').slice(0, 2).join(' ');
-    if (viWords && !queries.includes(viWords)) {
-      queries.push(viWords);
+
+  if (cleanedEn) {
+    const enWords = cleanedEn.split(/\s+/);
+    if (enWords.length >= 2) {
+      const twoWord = enWords.slice(0, 2).join(' ');
+      if (!queries.includes(twoWord)) queries.push(twoWord);
     }
+    if (!queries.includes(cleanedEn)) queries.push(cleanedEn);
   }
 
   for (const q of queries) {
@@ -385,7 +531,7 @@ export function loadVideoWithFallback(
 }
 
 /**
- * TIER 1: Generate an exact story-matched 16:9 image using Gemini Image Generation
+ * TIER 1: Generate an exact narration-matched 16:9 image using Gemini Image Generation
  */
 export async function generateStorySceneImage(
   visualPromptEn: string,
@@ -407,7 +553,7 @@ export async function generateStorySceneImage(
               {
                 parts: [
                   {
-                    text: `Cinematic 16:9 high-resolution illustration/photography, no text, no words, no watermark, vivid storytelling composition: ${visualPromptEn}`,
+                    text: `Cinematic 16:9 high-resolution realistic photography/illustration, no text, no words, no watermark, exact depiction of: ${visualPromptEn}`,
                   },
                 ],
               },
@@ -453,7 +599,7 @@ export async function generateStorySceneImage(
 }
 
 /**
- * TIER 2: Wikipedia Lead Article Image Search (en.wikipedia.org + vi.wikipedia.org)
+ * TIER 2: Wikipedia Lead Article Image Search (vi.wikipedia.org + en.wikipedia.org)
  */
 export async function searchWikipediaLeadImage(
   topicOrQuery: string,
@@ -497,7 +643,8 @@ export async function searchWikipediaLeadImage(
         lowerUrl.includes('locator_map') ||
         lowerUrl.includes('map_of') ||
         lowerUrl.includes('commons-logo') ||
-        lowerUrl.includes('question_book')
+        lowerUrl.includes('question_book') ||
+        lowerUrl.includes('disambig')
       ) {
         continue;
       }
@@ -517,7 +664,7 @@ export async function searchWikipediaLeadImage(
 }
 
 /**
- * TIER 3: Wikimedia Commons Strict Bitmap Search with relevance & landscape scoring
+ * TIER 3: Wikimedia Commons Strict Bitmap Search with narration-driven keyword scoring
  */
 export async function searchWikimediaCommons(
   keyword: string,
@@ -598,11 +745,11 @@ export async function searchWikimediaCommons(
         for (const token of queryTokens) {
           if (title.includes(token)) {
             matchedTokensCount++;
-            score += 18;
+            score += 22;
           }
         }
         if (matchedTokensCount === 0) {
-          score -= 25;
+          return;
         }
 
         const aspect = width / height;
@@ -619,7 +766,7 @@ export async function searchWikimediaCommons(
         }
 
         if (usedUrls && (usedUrls.has(url) || usedUrls.has(info.url))) {
-          score -= 120;
+          score -= 150;
         }
 
         candidates.push({
@@ -633,7 +780,7 @@ export async function searchWikimediaCommons(
         });
       });
 
-      const validCandidates = candidates.filter((c) => c.score > 0);
+      const validCandidates = candidates.filter((c) => c.score > 20);
       if (validCandidates.length === 0) return null;
 
       validCandidates.sort((a, b) => b.score - a.score);
@@ -648,23 +795,31 @@ export async function searchWikimediaCommons(
     }
   };
 
+  // Build search queries prioritizing the exact Vietnamese narration (`narration_vi`) first!
   const queriesToTry: string[] = [];
-  const cleanedEn = sanitizeSearchKeywords(keyword || '');
-  if (cleanedEn) {
-    queriesToTry.push(cleanedEn);
-    const words = cleanedEn.split(' ');
-    if (words.length > 3) {
-      queriesToTry.push(words.slice(0, 3).join(' '));
-    }
-    if (words.length > 2) {
-      queriesToTry.push(words.slice(0, 2).join(' '));
-    }
-  }
 
   if (narrationVi) {
     const mappedFromVi = extractVisualKeywordsFromVietnamese(narrationVi);
-    if (mappedFromVi && !queriesToTry.includes(mappedFromVi)) {
+    if (mappedFromVi) {
       queriesToTry.push(mappedFromVi);
+      const viMappedWords = mappedFromVi.split(/\s+/);
+      if (viMappedWords.length > 2) {
+        queriesToTry.push(viMappedWords.slice(0, 2).join(' '));
+      }
+    }
+  }
+
+  const cleanedEn = sanitizeSearchKeywords(keyword || '');
+  if (cleanedEn) {
+    if (!queriesToTry.includes(cleanedEn)) queriesToTry.push(cleanedEn);
+    const words = cleanedEn.split(/\s+/);
+    if (words.length > 3) {
+      const threeW = words.slice(0, 3).join(' ');
+      if (!queriesToTry.includes(threeW)) queriesToTry.push(threeW);
+    }
+    if (words.length > 2) {
+      const twoW = words.slice(0, 2).join(' ');
+      if (!queriesToTry.includes(twoW)) queriesToTry.push(twoW);
     }
   }
 
@@ -677,7 +832,7 @@ export async function searchWikimediaCommons(
 }
 
 /**
- * Loads an image from URL with CORS anonymous and caching.
+ * Loads an image from URL with CORS anonymous and server proxy fallback.
  */
 export function loadImageWithFallback(
   imageUrl: string,
@@ -740,9 +895,9 @@ export function loadImageWithFallback(
 }
 
 /**
- * Master Multi-Tier Homologous Video & Visual Resolver:
- * Prioritizes real HD video footage (cảnh quay thật) when available,
- * combined with AI 16:9 story scenes, Wikipedia Lead Images, and Wikimedia photographs!
+ * Master Narration-Driven Video & Image Resolver:
+ * Strictly searches for video clips and images directly from the scene's narration (`narration_vi`)
+ * and instructions so visuals are 100% homologous with the spoken dialogue!
  */
 export async function fetchVerifiedSceneMedia(
   keywordsEn: string,
@@ -759,10 +914,17 @@ export async function fetchVerifiedSceneMedia(
   imageElement?: HTMLImageElement;
   sourceType: 'video' | 'ai' | 'wikipedia' | 'wikimedia';
 } | null> {
-  // 0. First attempt: Real HD Video Footage (.webm / .mp4) from Wikimedia Commons
-  if (preferRealVideo) {
+  const narrationMappedEn = extractVisualKeywordsFromVietnamese(narrationVi || '');
+  const viCoreTopic = extractVietnameseCoreTopic(narrationVi || '');
+
+  // Primary search query combines narration-extracted keywords with scene keywords
+  const primarySearchQuery =
+    narrationMappedEn || wikipediaTopicEn || keywordsEn || viCoreTopic;
+
+  // 1. TIER 0: Search for strictly matching HD Video Footage (.webm / .mp4) from the narration subject
+  if (preferRealVideo && primarySearchQuery) {
     const realVideoUrl = await searchWikimediaVideoFootage(
-      wikipediaTopicEn || keywordsEn,
+      primarySearchQuery,
       narrationVi,
       usedUrls
     );
@@ -775,66 +937,15 @@ export async function fetchVerifiedSceneMedia(
           sourceType: 'video',
         };
       } catch {
-        // If video stream fails to decode, continue seamlessly to image/AI tiers
+        // Continue seamlessly to exact image tiers if video fails to stream
       }
     }
   }
 
-  const effectivePrompt =
-    visualPromptEn ||
-    extractVisualKeywordsFromVietnamese(narrationVi || '') ||
-    keywordsEn;
-
-  // 1. Try Gemini AI Scene Image Generation for 100% story fidelity
-  if (effectivePrompt) {
-    const geminiImgUrl = await generateStorySceneImage(effectivePrompt, sceneId);
-    if (geminiImgUrl) {
-      try {
-        const img = await loadImageWithFallback(geminiImgUrl, 8000);
-        return { imageUrl: geminiImgUrl, imageElement: img, sourceType: 'ai' };
-      } catch {
-        // continue
-      }
-    }
-  }
-
-  // 2. Try Curated Wikipedia Lead Image (English Wikipedia)
-  const wikiTopic =
-    wikipediaTopicEn ||
-    extractVisualKeywordsFromVietnamese(narrationVi || '') ||
-    keywordsEn.split(/\s+/).slice(0, 3).join(' ');
-
-  if (wikiTopic) {
-    const enWikiUrl = await searchWikipediaLeadImage(wikiTopic, 'en', usedUrls);
-    if (enWikiUrl) {
-      try {
-        const img = await loadImageWithFallback(enWikiUrl, 7000);
-        return { imageUrl: enWikiUrl, imageElement: img, sourceType: 'wikipedia' };
-      } catch {
-        // continue
-      }
-    }
-  }
-
-  // 3. Try Strict Wikimedia Commons Photograph Search
-  const commonsUrl = await searchWikimediaCommons(keywordsEn, narrationVi, usedUrls);
-  if (commonsUrl) {
-    try {
-      const img = await loadImageWithFallback(commonsUrl, 7000);
-      return { imageUrl: commonsUrl, imageElement: img, sourceType: 'wikimedia' };
-    } catch {
-      // continue
-    }
-  }
-
-  // 4. Try Vietnamese Wikipedia Lead Image
-  if (narrationVi) {
-    const viWords = narrationVi
-      .replace(/[.,;!?()"]/g, '')
-      .split(/\s+/)
-      .slice(0, 4)
-      .join(' ');
-    const viWikiUrl = await searchWikipediaLeadImage(viWords, 'vi', usedUrls);
+  // 2. TIER 1: Search Vietnamese Wikipedia (`vi.wikipedia.org`) & English Wikipedia (`en.wikipedia.org`)
+  // directly using the topic mentioned in `narration_vi`
+  if (viCoreTopic) {
+    const viWikiUrl = await searchWikipediaLeadImage(viCoreTopic, 'vi', usedUrls);
     if (viWikiUrl) {
       try {
         const img = await loadImageWithFallback(viWikiUrl, 7000);
@@ -845,11 +956,63 @@ export async function fetchVerifiedSceneMedia(
     }
   }
 
-  // 5. Try Zero-Key AI Story Visual Synthesizer (1280x720 16:9)
+  const enWikiTopic =
+    wikipediaTopicEn ||
+    narrationMappedEn ||
+    keywordsEn.split(/\s+/).slice(0, 3).join(' ');
+
+  if (enWikiTopic) {
+    const enWikiUrl = await searchWikipediaLeadImage(enWikiTopic, 'en', usedUrls);
+    if (enWikiUrl) {
+      try {
+        const img = await loadImageWithFallback(enWikiUrl, 7000);
+        return { imageUrl: enWikiUrl, imageElement: img, sourceType: 'wikipedia' };
+      } catch {
+        // continue
+      }
+    }
+  }
+
+  // 3. TIER 2: Strict Wikimedia Commons Photograph Search driven by `narration_vi` & `keywordsEn`
+  const commonsUrl = await searchWikimediaCommons(
+    narrationMappedEn || keywordsEn,
+    narrationVi,
+    usedUrls
+  );
+  if (commonsUrl) {
+    try {
+      const img = await loadImageWithFallback(commonsUrl, 7000);
+      return { imageUrl: commonsUrl, imageElement: img, sourceType: 'wikimedia' };
+    } catch {
+      // continue
+    }
+  }
+
+  // 4. TIER 3: Gemini AI 16:9 Scene Image Generation for exact narration depiction
+  const effectivePrompt =
+    visualPromptEn ||
+    narrationMappedEn ||
+    keywordsEn ||
+    narrationVi ||
+    'Vietnam nature landscape';
+
+  if (effectivePrompt) {
+    const geminiImgUrl = await generateStorySceneImage(effectivePrompt, sceneId);
+    if (geminiImgUrl) {
+      try {
+        const img = await loadImageWithFallback(geminiImgUrl, 8500);
+        return { imageUrl: geminiImgUrl, imageElement: img, sourceType: 'ai' };
+      } catch {
+        // continue
+      }
+    }
+  }
+
+  // 5. TIER 4: Zero-Key AI 16:9 Story Visual Synthesizer directly from narration prompt
   if (effectivePrompt) {
     try {
       const cleanPrompt = encodeURIComponent(
-        `cinematic 16:9 photography illustration of ${effectivePrompt}, vivid colors, high detail, no text`
+        `cinematic 16:9 realistic photography of ${effectivePrompt}, high detail, natural lighting, no text, no watermark`
       );
       const seed = sceneId * 101 + (effectivePrompt.length % 97);
       const aiStreamUrl = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=1280&height=720&nologo=true&seed=${seed}`;

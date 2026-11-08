@@ -61,7 +61,9 @@ export function exportSrtFile(scenes: Scene[], lessonTitle: string): void {
 }
 
 /**
- * Detects the best supported MIME type for MP4 or WebM
+ * Detects the best supported MIME type for MP4 or WebM that explicitly supports BOTH Video and Audio tracks.
+ * CRITICAL: Never use a video-only codec string like 'video/mp4;codecs=avc1' without an audio codec,
+ * because MediaRecorder will discard the voiceover audio track!
  */
 export function getSupportedVideoMimeType(format: VideoExportFormat): {
   mimeType: string;
@@ -69,31 +71,40 @@ export function getSupportedVideoMimeType(format: VideoExportFormat): {
   isNativeMp4: boolean;
 } {
   if (format === 'mp4') {
-    const mp4Mimes = [
+    const mp4AudioVideoMimes = [
       'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs=avc1.4d002a,mp4a.40.2',
       'video/mp4;codecs=avc1,mp4a.40.2',
-      'video/mp4;codecs=avc1',
+      'video/mp4;codecs=avc1,opus',
       'video/mp4;codecs=h264,aac',
+      'video/mp4;codecs=h264,opus',
       'video/mp4',
     ];
 
-    for (const mime of mp4Mimes) {
+    for (const mime of mp4AudioVideoMimes) {
       if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) {
         return { mimeType: mime, extension: 'mp4', isNativeMp4: true };
       }
     }
 
-    // Fallback if browser doesn't natively support video/mp4 in MediaRecorder
-    return {
-      mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+    // Fallback with guaranteed Opus audio support if native MP4 container isn't supported by browser
+    const fallbackMime =
+      typeof MediaRecorder !== 'undefined' &&
+      MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
         ? 'video/webm;codecs=vp9,opus'
-        : 'video/webm',
+        : typeof MediaRecorder !== 'undefined' &&
+          MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+        ? 'video/webm;codecs=vp8,opus'
+        : 'video/webm';
+
+    return {
+      mimeType: fallbackMime,
       extension: 'mp4',
       isNativeMp4: false,
     };
   }
 
-  // WebM format
+  // WebM format with explicit Opus audio codec
   const webmMimes = [
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
@@ -110,7 +121,8 @@ export function getSupportedVideoMimeType(format: VideoExportFormat): {
 }
 
 /**
- * Exports video in MP4 or WebM format by combining canvas.captureStream(30) and AudioContext stream
+ * Exports video in MP4 or WebM format by combining canvas.captureStream(30) and Web Audio voiceover stream.
+ * Guarantees 100% voiceover narration inclusion and zero background music.
  */
 export async function exportVideo(
   canvas: HTMLCanvasElement,
@@ -124,17 +136,32 @@ export async function exportVideo(
     throw new Error('Chưa có phân cảnh nào để xuất video.');
   }
 
-  // Ensure audio context is ready and preload all scene narrations first so export has zero network lag
+  // 1. Stop any ongoing preview audio and initialize Web Audio context + MediaStreamDestination
+  audioEngine.stopAll();
   await audioEngine.ensureContext();
+
   onProgress({
     isExporting: true,
-    progressPercent: 1,
+    progressPercent: 2,
     currentSceneIndex: 0,
     totalScenes: scenes.length,
     timeRemainingSec: scenes.reduce((acc, s) => acc + s.duration_seconds, 0),
-    statusText: 'Đang nạp sẵn toàn bộ giọng đọc tiếng Việt chất lượng cao...',
+    statusText: 'Đang nạp và giải mã toàn bộ lời thoại tiếng Việt vào luồng âm thanh xuất file...',
   });
-  await audioEngine.preloadNarrations(scenes.map((s) => s.narration_normalized));
+
+  // 2. Preload and decode all Vietnamese TTS chunks into AudioBuffers so they route 100% through MediaStreamDestination
+  const audioDurations = await audioEngine.preloadNarrations(
+    scenes.map((s) => s.narration_normalized)
+  );
+
+  // Adjust effective export durations so no scene ever cuts off its voiceover
+  const exportScenes: Scene[] = scenes.map((sc, idx) => {
+    const minAudioSec = audioDurations[idx] ? Math.ceil(audioDurations[idx] + 1.0) : sc.duration_seconds;
+    return {
+      ...sc,
+      duration_seconds: Math.max(sc.duration_seconds, minAudioSec),
+    };
+  });
 
   const renderer = new CanvasRenderer(canvas);
   const canvasStream = canvas.captureStream(30);
@@ -142,17 +169,21 @@ export async function exportVideo(
 
   const tracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
   if (audioStream && audioStream.getAudioTracks().length > 0) {
-    tracks.push(audioStream.getAudioTracks()[0]);
+    audioStream.getAudioTracks().forEach((track) => {
+      track.enabled = true;
+      tracks.push(track);
+    });
   }
 
   const combinedStream = new MediaStream(tracks);
 
-  // Supported MIME type detection
+  // Supported MIME type detection (with both video + audio codecs)
   const { mimeType, extension } = getSupportedVideoMimeType(format);
 
   const recorder = new MediaRecorder(combinedStream, {
     mimeType,
-    videoBitsPerSecond: 4_000_000, // 4 Mbps for high-definition 720p
+    videoBitsPerSecond: 4_000_000, // 4 Mbps 720p HD video
+    audioBitsPerSecond: 128_000,   // 128 kbps clear voiceover audio
   });
 
   const chunks: Blob[] = [];
@@ -162,9 +193,9 @@ export async function exportVideo(
     }
   };
 
-  const totalDurationSec = scenes.reduce((acc, s) => acc + s.duration_seconds, 0);
+  const totalDurationSec = exportScenes.reduce((acc, s) => acc + s.duration_seconds, 0);
 
-  return new Promise(async (resolve, reject) => {
+  return new Promise((resolve, reject) => {
     let isCancelled = false;
 
     recorder.onstop = () => {
@@ -198,15 +229,15 @@ export async function exportVideo(
         a.click();
         document.body.removeChild(a);
 
-        setTimeout(() => URL.revokeObjectURL(downloadUrl), 8000);
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 10000);
 
         onProgress({
           isExporting: false,
           progressPercent: 100,
-          currentSceneIndex: scenes.length - 1,
-          totalScenes: scenes.length,
+          currentSceneIndex: exportScenes.length - 1,
+          totalScenes: exportScenes.length,
           timeRemainingSec: 0,
-          statusText: `Xuất video ${extension.toUpperCase()} thành công!`,
+          statusText: `Xuất video ${extension.toUpperCase()} kèm lời thoại thành công!`,
         });
 
         resolve();
@@ -220,34 +251,35 @@ export async function exportVideo(
       reject(err);
     };
 
-    // Start background music
-    await audioEngine.startBackgroundMusic();
-    recorder.start(500);
+    // Start recording (collect data every 300ms for smooth muxing)
+    recorder.start(300);
 
     let currentSceneIndex = 0;
     let sceneStartTime = performance.now();
     let accumulatedTime = 0;
 
-    const renderLoop = async () => {
+    // Trigger first scene narration immediately
+    void audioEngine.playVietnameseNarration(exportScenes[0].narration_normalized);
+
+    const renderLoop = () => {
       if (onCancelRequested && onCancelRequested()) {
         isCancelled = true;
         recorder.stop();
         return;
       }
 
-      if (currentSceneIndex >= scenes.length) {
-        // Finished all scenes
+      if (currentSceneIndex >= exportScenes.length) {
         recorder.stop();
         return;
       }
 
-      const scene = scenes[currentSceneIndex];
+      const scene = exportScenes[currentSceneIndex];
       const now = performance.now();
       const sceneElapsed = (now - sceneStartTime) / 1000;
       const sceneDuration = scene.duration_seconds;
 
       accumulatedTime =
-        scenes.slice(0, currentSceneIndex).reduce((acc, s) => acc + s.duration_seconds, 0) +
+        exportScenes.slice(0, currentSceneIndex).reduce((acc, s) => acc + s.duration_seconds, 0) +
         Math.min(sceneElapsed, sceneDuration);
 
       const progressPercent = Math.min(99, Math.round((accumulatedTime / totalDurationSec) * 100));
@@ -257,16 +289,16 @@ export async function exportVideo(
         isExporting: true,
         progressPercent,
         currentSceneIndex,
-        totalScenes: scenes.length,
+        totalScenes: exportScenes.length,
         timeRemainingSec: timeRemaining,
-        statusText: `Đang render phân cảnh ${currentSceneIndex + 1}/${scenes.length} [${format.toUpperCase()}]: ${scene.title}`,
+        statusText: `Đang ghi hình & thu lời thoại cảnh ${currentSceneIndex + 1}/${exportScenes.length} [${format.toUpperCase()}]: ${scene.title}`,
       });
 
       // Transition check (last 0.8s, only after voiceover completes)
       const transitionDuration = 0.8;
       const timeLeftInScene = sceneDuration - sceneElapsed;
       const isTransitioning =
-        currentSceneIndex < scenes.length - 1 &&
+        currentSceneIndex < exportScenes.length - 1 &&
         timeLeftInScene < transitionDuration &&
         timeLeftInScene > 0 &&
         !audioEngine.isCurrentlySpeaking();
@@ -274,7 +306,7 @@ export async function exportVideo(
         ? 1.0 - timeLeftInScene / transitionDuration
         : 0;
 
-      const nextScene = isTransitioning ? scenes[currentSceneIndex + 1] : null;
+      const nextScene = isTransitioning ? exportScenes[currentSceneIndex + 1] : null;
 
       renderer.render({
         currentScene: scene,
@@ -289,23 +321,20 @@ export async function exportVideo(
       const voiceStillSpeaking = audioEngine.isCurrentlySpeaking();
       if (
         (sceneElapsed >= sceneDuration && !voiceStillSpeaking) ||
-        sceneElapsed >= sceneDuration + 8
+        sceneElapsed >= sceneDuration + 10
       ) {
-        // Move to next scene only after narration finishes cleanly
         currentSceneIndex++;
         sceneStartTime = performance.now();
 
-        if (currentSceneIndex < scenes.length) {
-          const nextSceneObj = scenes[currentSceneIndex];
-          audioEngine.playVietnameseNarration(nextSceneObj.narration_normalized);
+        if (currentSceneIndex < exportScenes.length) {
+          const nextSceneObj = exportScenes[currentSceneIndex];
+          void audioEngine.playVietnameseNarration(nextSceneObj.narration_normalized);
         }
       }
 
       requestAnimationFrame(renderLoop);
     };
 
-    // Trigger first scene narration
-    audioEngine.playVietnameseNarration(scenes[0].narration_normalized);
     requestAnimationFrame(renderLoop);
   });
 }

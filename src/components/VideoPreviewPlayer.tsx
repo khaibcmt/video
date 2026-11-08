@@ -114,9 +114,6 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     audioEngine.stopVoiceover();
 
     await audioEngine.ensureContext();
-    if (!isMuted) {
-      audioEngine.startBackgroundMusic();
-    }
 
     setIsPlaying(true);
 
@@ -284,7 +281,6 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     if (nextMute) {
       audioEngine.stopAll();
     } else if (isPlaying) {
-      audioEngine.startBackgroundMusic();
       const current = scenes[activeSceneIdx];
       if (current) {
         audioEngine.playVietnameseNarration(current.narration_normalized);
@@ -313,7 +309,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
       currentSceneIndex: 0,
       totalScenes: scenes.length,
       timeRemainingSec: totalDuration,
-      statusText: `Đang chuẩn bị luồng ghi hình định dạng ${format.toUpperCase()}...`,
+      statusText: `Đang chuẩn bị luồng ghi hình & lời thoại định dạng ${format.toUpperCase()}...`,
     });
 
     try {
@@ -383,7 +379,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
               Chưa có phân cảnh nào được dựng
             </h3>
             <p className="text-xs text-slate-400 max-w-md">
-              Nhập kịch bản ở khung bên trái hoặc chọn kịch bản mẫu và nhấn "✨ Phân Tích & Dựng Phân Cảnh" để Gemini AI tự động tạo video 16:9 với hiệu ứng Ken Burns và lồng tiếng Việt.
+              Nhập kịch bản ở khung bên trái hoặc chọn kịch bản mẫu và nhấn "✨ Phân Tích & Dựng Phân Cảnh" để tạo video 16:9 đồng cấu hình ảnh và lời thoại tiếng Việt.
             </p>
           </div>
         )}
@@ -395,7 +391,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
               <Sparkles className="w-8 h-8" />
             </div>
             <h3 className="text-lg font-bold text-white mb-1">
-              Đang Render & Xuất Video Chuẩn Điện Ảnh (1280x720)
+              Đang Render Video & Thu Lời Thoại Tiếng Việt (1280x720)
             </h3>
             <p className="text-xs text-slate-400 max-w-md mb-4">
               {exportProgress.statusText}
@@ -471,7 +467,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
           <button
             onClick={handleToggleMute}
             className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-            title={isMuted ? 'Bật âm thanh' : 'Tắt âm thanh'}
+            title={isMuted ? 'Bật âm thanh lời thoại' : 'Tắt âm thanh lời thoại'}
           >
             {isMuted ? (
               <VolumeX className="w-4 h-4 text-rose-400" />
@@ -487,28 +483,23 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
             <span className="text-slate-400">{formatTime(totalDuration)}</span>
           </div>
 
-          {/* Audio Ducking Live Telemetry (in control bar, keeping video canvas clean) */}
+          {/* Pure Vietnamese Voiceover Status (No Background Music) */}
           <div
-            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-all ${
               isDuckingActive
                 ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-sm'
                 : 'bg-slate-900 text-slate-400 border-slate-800'
             }`}
-            title="Trạng thái Audio Ducking: Giọng đọc 100%, Nhạc nền tự hạ khi có giọng nói"
+            title="Chế độ âm thanh tập trung 100% vào lời thoại tiếng Việt (Đã tắt nhạc nền)"
           >
-            <div className="flex items-center gap-1">
-              <Mic
-                className={`w-3 h-3 ${
-                  isDuckingActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'
-                }`}
-              />
-              <span>Voice: 100%</span>
-            </div>
-            <span className="text-slate-600">•</span>
-            <div className="flex items-center gap-1">
-              <Music className="w-3 h-3 text-cyan-400" />
-              <span>BGM: {isDuckingActive ? '6%' : `${Math.round(currentMusicGain * 100)}%`}</span>
-            </div>
+            <Mic
+              className={`w-3.5 h-3.5 ${
+                isDuckingActive ? 'text-amber-400 animate-pulse' : 'text-emerald-400'
+              }`}
+            />
+            <span>
+              {isDuckingActive ? 'Đang đọc lời thoại (100%)' : 'Lời thoại: Sẵn sàng (Không nhạc nền)'}
+            </span>
           </div>
         </div>
 

@@ -9,7 +9,6 @@ export function splitTextIntoChunks(text: string, maxChars: number = 165): strin
   const cleaned = text.replace(/\s+/g, ' ').trim();
   if (cleaned.length <= maxChars) return [cleaned];
 
-  // First split by major sentence boundaries (. ! ? ; : or newline)
   const rawSentences = cleaned.split(/(?<=[.!?;:\n])\s+/);
   const chunks: string[] = [];
   let current = '';
@@ -25,7 +24,6 @@ export function splitTextIntoChunks(text: string, maxChars: number = 165): strin
         if (clause.length <= maxChars) {
           current = clause.trim();
         } else {
-          // Split long clause by words
           const words = clause.split(/\s+/);
           current = '';
           for (const word of words) {
@@ -71,26 +69,16 @@ class AudioEngine {
   private musicGain: GainNode | null = null;
   private masterGain: GainNode | null = null;
   private mediaStreamDestination: MediaStreamAudioDestinationNode | null = null;
-
-  // Synthesizer background music nodes
-  private synthInterval: any = null;
-  private synthNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
-  private isMusicPlaying: boolean = false;
-  private currentMusicMood: string = 'cinematic';
-
-  // Custom audio element for user uploaded / external audio
-  private customAudioEl: HTMLAudioElement | null = null;
-  private customAudioSource: MediaElementAudioSourceNode | null = null;
+  private silentKeepAliveOsc: OscillatorNode | null = null;
 
   // Active voiceover playback control & anti-overlap session token
   private playbackToken: number = 0;
   private activeVoiceSource: AudioBufferSourceNode | null = null;
   private activeHtmlAudio: HTMLAudioElement | null = null;
   private isVoiceoverPlaying: boolean = false;
-  private isDucked: boolean = false;
   private speechKeepAliveTimer: any = null;
 
-  // Preload cache for instant zero-lag playback
+  // Preload cache for instant zero-lag playback and guaranteed export audio
   private ttsBufferCache = new Map<string, AudioBuffer>();
   private ttsPendingFetches = new Map<string, Promise<AudioBuffer | null>>();
 
@@ -118,13 +106,12 @@ class AudioEngine {
     return () => this.duckingListeners.delete(listener);
   }
 
-  private notifyDucking(ducked: boolean, gainVal: number) {
-    this.isDucked = ducked;
+  private notifySpeakingState(speaking: boolean) {
     this.duckingListeners.forEach((l) => {
       try {
-        l(ducked, gainVal);
+        l(speaking, 0);
       } catch (err) {
-        console.error('Error in ducking listener:', err);
+        console.error('Error in audio state listener:', err);
       }
     });
   }
@@ -135,28 +122,41 @@ class AudioEngine {
         window.AudioContext || (window as any).webkitAudioContext;
       this.audioCtx = new AudioContextClass();
 
-      // Master gain
+      // Master gain - 100% pure crystal-clear voiceover
       this.masterGain = this.audioCtx.createGain();
-      this.masterGain.gain.setValueAtTime(0.95, this.audioCtx.currentTime);
+      this.masterGain.gain.setValueAtTime(1.0, this.audioCtx.currentTime);
 
       // Voiceover node - Gain 100%
       this.voiceGain = this.audioCtx.createGain();
       this.voiceGain.gain.setValueAtTime(1.0, this.audioCtx.currentTime);
 
-      // Background music node - Gain default 25%
+      // Background music node - Muted (0%) as user requested no background music
       this.musicGain = this.audioCtx.createGain();
-      this.musicGain.gain.setValueAtTime(0.25, this.audioCtx.currentTime);
+      this.musicGain.gain.setValueAtTime(0.0, this.audioCtx.currentTime);
 
       // Create MediaStream destination for recording with MediaRecorder
       this.mediaStreamDestination = this.audioCtx.createMediaStreamDestination();
 
-      // Wire nodes
+      // Wire nodes: connect voiceGain BOTH to masterGain (speakers) AND directly to mediaStreamDestination (export recorder)
       this.voiceGain.connect(this.masterGain);
-      this.musicGain.connect(this.masterGain);
+      this.voiceGain.connect(this.mediaStreamDestination);
 
-      // Output to speakers and to export stream
+      // Output to speakers
       this.masterGain.connect(this.audioCtx.destination);
-      this.masterGain.connect(this.mediaStreamDestination);
+
+      // Continuous ultra-quiet keep-alive signal into mediaStreamDestination so MediaRecorder never drops the audio track during pauses!
+      try {
+        const silentOsc = this.audioCtx.createOscillator();
+        const silentGain = this.audioCtx.createGain();
+        silentOsc.frequency.setValueAtTime(440, this.audioCtx.currentTime);
+        silentGain.gain.setValueAtTime(0.00001, this.audioCtx.currentTime); // -100dB inaudible keep-alive
+        silentOsc.connect(silentGain);
+        silentGain.connect(this.mediaStreamDestination);
+        silentOsc.start();
+        this.silentKeepAliveOsc = silentOsc;
+      } catch {
+        // ignore
+      }
     }
 
     if (this.audioCtx.state === 'suspended') {
@@ -178,34 +178,16 @@ class AudioEngine {
     return this.isVoiceoverPlaying;
   }
 
-  /**
-   * Smoothly duck music to 6% when voiceover speaks
-   */
-  public duckMusic(transitionDuration: number = 0.25): void {
-    if (!this.audioCtx || !this.musicGain) return;
-    const now = this.audioCtx.currentTime;
-    this.musicGain.gain.cancelScheduledValues(now);
-    this.musicGain.gain.setValueAtTime(this.musicGain.gain.value, now);
-    this.musicGain.gain.linearRampToValueAtTime(0.06, now + transitionDuration);
-    this.notifyDucking(true, 0.06);
+  public duckMusic(): void {
+    this.notifySpeakingState(true);
   }
 
-  /**
-   * Smoothly restore music to 25% when voiceover finishes
-   */
-  public restoreMusic(transitionDuration: number = 0.6): void {
-    if (!this.audioCtx || !this.musicGain) return;
-    const now = this.audioCtx.currentTime;
-    this.musicGain.gain.cancelScheduledValues(now);
-    this.musicGain.gain.setValueAtTime(this.musicGain.gain.value, now);
-    this.musicGain.gain.linearRampToValueAtTime(0.25, now + transitionDuration);
-    this.notifyDucking(false, 0.25);
+  public restoreMusic(): void {
+    this.notifySpeakingState(false);
   }
 
-  public setMusicBaseVolume(vol: number): void {
-    if (this.musicGain && this.audioCtx && !this.isDucked) {
-      this.musicGain.gain.setValueAtTime(vol, this.audioCtx.currentTime);
-    }
+  public setMusicBaseVolume(_vol: number): void {
+    // Background music removed to focus 100% on voiceover and visuals
   }
 
   public setVoiceVolume(vol: number): void {
@@ -215,148 +197,21 @@ class AudioEngine {
   }
 
   /**
-   * Starts ambient procedural documentary soundtrack
+   * Background music is intentionally disabled so video focuses 100% on clear voiceover and visuals
    */
-  public async startBackgroundMusic(mood: string = 'cinematic'): Promise<void> {
+  public async startBackgroundMusic(_mood: string = 'cinematic'): Promise<void> {
     await this.ensureContext();
-    if (this.isMusicPlaying && this.currentMusicMood === mood) return;
-
-    this.stopBackgroundMusic();
-    this.currentMusicMood = mood;
-    this.isMusicPlaying = true;
-
-    const chords: number[][] = [
-      [73.4, 110.0, 174.6, 220.0], // Dm9
-      [65.4, 98.0, 164.8, 220.0],  // C add 9
-      [58.2, 87.3, 146.8, 174.6],  // Bb Maj7
-      [65.4, 110.0, 164.8, 246.9], // Am7
-    ];
-
-    let chordIndex = 0;
-
-    const playNextChord = () => {
-      if (!this.isMusicPlaying || !this.audioCtx || !this.musicGain) return;
-
-      const currentNotes = chords[chordIndex % chords.length];
-      chordIndex++;
-
-      const oldNodes = [...this.synthNodes];
-      this.synthNodes = [];
-      const fadeNow = this.audioCtx.currentTime;
-
-      oldNodes.forEach(({ osc, gain }) => {
-        try {
-          gain.gain.cancelScheduledValues(fadeNow);
-          gain.gain.setValueAtTime(gain.gain.value, fadeNow);
-          gain.gain.linearRampToValueAtTime(0.0001, fadeNow + 1.8);
-          setTimeout(() => {
-            try {
-              osc.stop();
-              osc.disconnect();
-              gain.disconnect();
-            } catch {}
-          }, 2000);
-        } catch {}
-      });
-
-      const filter = this.audioCtx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(550, this.audioCtx.currentTime);
-      filter.Q.setValueAtTime(1.5, this.audioCtx.currentTime);
-      filter.connect(this.musicGain);
-
-      currentNotes.forEach((freq, idx) => {
-        if (!this.audioCtx) return;
-        const osc = this.audioCtx.createOscillator();
-        const gain = this.audioCtx.createGain();
-
-        osc.type = idx === 0 ? 'sine' : 'triangle';
-        osc.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
-
-        const detune = (idx * 2 - 2) + Math.sin(Date.now() / 1000) * 1.5;
-        osc.detune.setValueAtTime(detune, this.audioCtx.currentTime);
-
-        const targetGain = idx === 0 ? 0.32 : 0.14;
-        gain.gain.setValueAtTime(0.0001, this.audioCtx.currentTime);
-        gain.gain.linearRampToValueAtTime(targetGain, this.audioCtx.currentTime + 1.5);
-
-        osc.connect(gain);
-        gain.connect(filter);
-        osc.start();
-
-        this.synthNodes.push({ osc, gain });
-      });
-    };
-
-    playNextChord();
-    this.synthInterval = setInterval(playNextChord, 5500);
   }
 
   public stopBackgroundMusic(): void {
-    this.isMusicPlaying = false;
-    if (this.synthInterval) {
-      clearInterval(this.synthInterval);
-      this.synthInterval = null;
-    }
-
-    if (this.audioCtx) {
-      const now = this.audioCtx.currentTime;
-      this.synthNodes.forEach(({ osc, gain }) => {
-        try {
-          gain.gain.linearRampToValueAtTime(0.0001, now + 0.3);
-          setTimeout(() => {
-            try {
-              osc.stop();
-              osc.disconnect();
-              gain.disconnect();
-            } catch {}
-          }, 350);
-        } catch {}
-      });
-      this.synthNodes = [];
-    }
-
-    if (this.customAudioEl) {
-      this.customAudioEl.pause();
-    }
+    // No-op (background music removed)
   }
 
   /**
-   * Loads custom MP3 file for background music
-   */
-  public async loadCustomMusic(file: File): Promise<void> {
-    await this.ensureContext();
-    this.stopBackgroundMusic();
-
-    const url = URL.createObjectURL(file);
-    if (!this.customAudioEl) {
-      this.customAudioEl = new Audio();
-      this.customAudioEl.loop = true;
-      this.customAudioEl.crossOrigin = 'anonymous';
-      this.customAudioSource = this.audioCtx!.createMediaElementSource(this.customAudioEl);
-      this.customAudioSource.connect(this.musicGain!);
-    }
-
-    this.customAudioEl.src = url;
-    await this.customAudioEl.play();
-    this.isMusicPlaying = true;
-  }
-
-  private isStaticHost(): boolean {
-    return (
-      typeof window !== 'undefined' &&
-      (window.location.hostname.includes('github.io') ||
-        window.location.protocol === 'file:' ||
-        (window.location.port !== '3000' && !window.location.hostname.includes('run.app')))
-    );
-  }
-
-  /**
-   * Fetches and caches a single chunk (<= 165 chars) as an AudioBuffer
+   * Fetches and decodes a single TTS chunk (<= 165 chars) as an AudioBuffer.
+   * Tries local /api/tts first, and falls back to public CORS audio proxy if on static GitHub Pages!
    */
   private async fetchChunkBuffer(chunk: string): Promise<AudioBuffer | null> {
-    if (this.isStaticHost()) return null;
-
     const key = chunk.trim();
     if (!key) return null;
 
@@ -369,20 +224,53 @@ class AudioEngine {
     }
 
     const fetchPromise = (async (): Promise<AudioBuffer | null> => {
+      const ctx = await this.ensureContext();
+
+      // 1. Primary: Local Express server TTS proxy (/api/tts) — works on localhost:3000, Cloud Run (*.run.app), and full-stack deployments
       try {
-        const ctx = await this.ensureContext();
         const res = await fetch(`/api/tts?text=${encodeURIComponent(key)}`);
-        if (!res.ok) return null;
-        const arrayBuffer = await res.arrayBuffer();
-        if (!arrayBuffer || arrayBuffer.byteLength < 100) return null;
-        const decoded = await ctx.decodeAudioData(arrayBuffer);
-        this.ttsBufferCache.set(key, decoded);
-        return decoded;
+        if (res.ok) {
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('audio') || contentType.includes('octet-stream')) {
+            const arrayBuffer = await res.arrayBuffer();
+            if (arrayBuffer && arrayBuffer.byteLength > 200) {
+              const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+              this.ttsBufferCache.set(key, decoded);
+              return decoded;
+            }
+          }
+        }
       } catch {
-        return null;
-      } finally {
-        this.ttsPendingFetches.delete(key);
+        // Fall through to CORS proxy for static GitHub Pages
       }
+
+      // 2. Fallback for static GitHub Pages: Fetch Google Translate TTS binary via CORS proxy so WebAudio + MediaRecorder still record the voice!
+      const googleTtsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
+        key
+      )}&tl=vi&client=gtx`;
+
+      const corsProxies = [
+        `https://corsproxy.io/?${encodeURIComponent(googleTtsUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(googleTtsUrl)}`,
+      ];
+
+      for (const proxyUrl of corsProxies) {
+        try {
+          const res = await fetch(proxyUrl);
+          if (res.ok) {
+            const arrayBuffer = await res.arrayBuffer();
+            if (arrayBuffer && arrayBuffer.byteLength > 200) {
+              const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+              this.ttsBufferCache.set(key, decoded);
+              return decoded;
+            }
+          }
+        } catch {
+          // try next proxy
+        }
+      }
+
+      return null;
     })();
 
     this.ttsPendingFetches.set(key, fetchPromise);
@@ -422,10 +310,10 @@ class AudioEngine {
 
   /**
    * Fetches full narration (of any length) by chunking, fetching in parallel, and concatenating into a single continuous AudioBuffer!
-   * Also returns exact duration in seconds so scene timing never cuts off speech.
+   * Guarantees the voiceover is routed through Web Audio API for both speaker playback and video file export (.mp4 / .webm).
    */
   public async getOrFetchFullNarrationBuffer(normalizedText: string): Promise<AudioBuffer | null> {
-    if (this.isStaticHost() || !normalizedText.trim()) return null;
+    if (!normalizedText || !normalizedText.trim()) return null;
 
     const fullKey = `FULL__${normalizedText.trim()}`;
     if (this.ttsBufferCache.has(fullKey)) {
@@ -455,10 +343,6 @@ class AudioEngine {
    * Returns a map of scene index -> actual audio duration in seconds.
    */
   public async preloadNarrations(texts: string[]): Promise<(number | null)[]> {
-    if (this.isStaticHost()) {
-      return texts.map(() => null);
-    }
-
     return Promise.all(
       texts.map(async (text) => {
         const buf = await this.getOrFetchFullNarrationBuffer(text);
@@ -468,7 +352,7 @@ class AudioEngine {
   }
 
   /**
-   * Plays Vietnamese Google TTS chunks sequentially via HTML5 Audio elements (for static GitHub Pages)
+   * Plays Vietnamese Google TTS chunks sequentially via HTML5 Audio elements (last resort if both server and CORS proxies are unreachable)
    */
   private playGoogleTtsChunksSequentially(
     chunks: string[],
@@ -501,7 +385,6 @@ class AudioEngine {
         audio.preload = 'auto';
         this.activeHtmlAudio = audio;
 
-        // Pre-warm next chunk in background
         if (currentIdx < chunks.length) {
           const nextUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
             chunks[currentIdx]
@@ -542,7 +425,7 @@ class AudioEngine {
   }
 
   /**
-   * Fallback Web Speech API with strict Vietnamese check and Chrome 15s anti-freeze keep-alive
+   * Fallback Web Speech API with strict Vietnamese check
    */
   private fallbackWebSpeech(
     normalizedText: string,
@@ -569,7 +452,6 @@ class AudioEngine {
           v.name.toLowerCase().includes('vietnam')
       );
 
-      // Strictly disallow English voice reading Vietnamese
       if (!vietnameseVoice && voices.length > 0) {
         const wordCount = normalizedText.split(/\s+/).length;
         const durationMs = Math.max(3000, (wordCount / 3.2) * 1000);
@@ -588,7 +470,6 @@ class AudioEngine {
 
       this.duckMusic();
 
-      // Chrome bug fix: speechSynthesis freezes after ~14 seconds unless paused/resumed
       this.speechKeepAliveTimer = setInterval(() => {
         if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
           window.speechSynthesis.pause();
@@ -645,13 +526,13 @@ class AudioEngine {
   }
 
   /**
-   * Plays fluent Vietnamese narration with zero overlap, zero truncation, and automatic ducking.
+   * Plays fluent Vietnamese narration with zero overlap, zero background music distraction,
+   * and direct Web Audio routing so exported video files ALWAYS include the voiceover!
    */
   public async playVietnameseNarration(
     normalizedText: string,
     onEnded?: () => void
   ): Promise<void> {
-    // Increment playback token and cancel any active speech immediately to prevent overlapping voices ("nói lấp")
     this.stopVoiceover();
     const currentToken = ++this.playbackToken;
 
@@ -665,11 +546,14 @@ class AudioEngine {
 
     this.isVoiceoverPlaying = true;
 
-    // 1. First attempt full concatenated AudioBuffer (crystal-clear, zero gap between clauses, works with MediaRecorder)
+    // 1. Play via decoded Web Audio API AudioBuffer (connects to both speakers AND MediaRecorder export stream!)
     const audioBuffer = await this.getOrFetchFullNarrationBuffer(normalizedText);
     if (currentToken !== this.playbackToken) return;
 
     if (audioBuffer && this.voiceGain) {
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
       this.duckMusic();
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
@@ -689,7 +573,7 @@ class AudioEngine {
       return;
     }
 
-    // 2. Static host (GitHub Pages): play sequential chunks via HTML5 Audio element
+    // 2. Fallback HTML5 Audio element if buffer decoding was unavailable
     const chunks = splitTextIntoChunks(normalizedText, 165);
     const elementPlayed = this.playGoogleTtsChunksSequentially(chunks, currentToken, onEnded);
 
@@ -699,7 +583,6 @@ class AudioEngine {
   }
 
   public stopVoiceover(): void {
-    // Invalidate any pending async speech callbacks
     this.playbackToken++;
 
     if (this.speechKeepAliveTimer) {
@@ -740,7 +623,6 @@ class AudioEngine {
 
   public stopAll(): void {
     this.stopVoiceover();
-    this.stopBackgroundMusic();
     this.restoreMusic();
   }
 }

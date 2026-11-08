@@ -53,7 +53,6 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
   const totalCurrentDuration = scenes.reduce((acc, s) => acc + s.duration_seconds, 0);
 
   const handleTestTts = (scene: Scene) => {
-    audioEngine.startBackgroundMusic();
     audioEngine.playVietnameseNarration(scene.narration_normalized);
   };
 
@@ -505,18 +504,35 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
               {/* Narration Editor */}
               <div className="space-y-2 pt-1 border-t border-slate-800/60">
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                     <span className="text-[11px] font-medium text-slate-400">
-                      Lời bình nguyên bản (Hiển thị phụ đề trên video):
+                      Lời bình nguyên bản (Tìm hình ảnh/video trực tiếp từ lời thoại này):
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => handleTestTts(scene)}
-                      className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 transition"
-                    >
-                      <Volume2 className="w-3.5 h-3.5" />
-                      Thử giọng đọc + Ducking
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRefetchImage(idx, scene.search_keywords_en);
+                        }}
+                        className="text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition"
+                        title="Tìm kiếm lại video & hình ảnh khớp chính xác với lời thoại này"
+                      >
+                        <Search className="w-3 h-3" />
+                        Đồng bộ Hình ảnh theo Lời thoại
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTestTts(scene);
+                        }}
+                        className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 transition"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        Nghe thử lời thoại
+                      </button>
+                    </div>
                   </div>
                   <textarea
                     value={scene.narration_vi}

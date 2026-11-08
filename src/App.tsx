@@ -334,19 +334,19 @@ export default function App() {
 
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-cyan-400 font-bold block mb-1">
-                🎥 Ken Burns & LUT Canvas
+                🎥 Đồng Cấu Hình Ảnh & Lời Thoại
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Canvas 16:9 (1280x720) 30fps với chuyển cảnh mờ dần, bộ lọc màu điện ảnh và tự sinh nền Procedural Gradient nếu không có ảnh.
+                Tự động trích xuất chủ thể trực tiếp từ lời thoại để tìm kiếm video thật, ảnh Wikipedia và khung hình AI 16:9 khớp 100% nội dung.
               </p>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-emerald-400 font-bold block mb-1">
-                🎙️ Vietnamese Audio Ducking
+                🎙️ Lồng Tiếng Việt Lưu Loát (100% Voice)
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Web Audio API tự động giảm nhạc nền xuống 6% khi đọc thoại tiếng Việt và hồi phục về 25% khi dứt câu.
+                Loại bỏ hoàn toàn nhạc nền, tập trung 100% vào giọng đọc tiếng Việt rõ nét và thu trực tiếp vào file video MP4/WebM khi xuất.
               </p>
             </div>
           </div>

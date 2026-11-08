@@ -187,15 +187,11 @@ export interface AnalyzeScriptParams {
   onStatusUpdate?: (status: string) => void;
 }
 
-// Check if running on static host (GitHub Pages, Vercel static, etc.)
+// Check if running on static host (GitHub Pages or local file protocol)
 export function isStaticEnvironment(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname;
-  return (
-    host.includes('github.io') ||
-    window.location.protocol === 'file:' ||
-    (window.location.port !== '3000' && !host.includes('run.app'))
-  );
+  return host.includes('github.io') || window.location.protocol === 'file:';
 }
 
 /**
