@@ -1,6 +1,7 @@
 import { Scene, ThinkingLevelOption } from '../types';
 import { keyRotationEngine } from './keyRotation';
 import { matchSamplePreset } from './sampleData';
+import { extractVisualKeywordsFromVietnamese } from './mediaLoader';
 
 /**
  * Strips out extraneous meta-instructions, stage directions, scene headers, and non-spoken text
@@ -11,10 +12,16 @@ export function cleanExtraneousInstructions(text: string): string {
     // Remove bracket tags like [Phân cảnh 1], [Cảnh 2: ...], [Âm nhạc...]
     .replace(/\[[^\]]*\]/g, '')
     // Remove parenthetical stage cues like (Nhạc nền nhẹ nhàng), (MC cười), (Chuyển cảnh)
-    .replace(/\([^\)]*(nhạc|cảnh|tiếng|hiệu ứng|camera|video|mc|đạo diễn|zoom|pan|intro|outro)[^\)]*\)/gi, '')
+    .replace(
+      /\([^\)]*(nhạc|cảnh|tiếng|hiệu ứng|camera|video|mc|đạo diễn|zoom|pan|intro|outro)[^\)]*\)/gi,
+      ''
+    )
     // Remove labels like "Phân cảnh 1:", "Cảnh 1:", "Lời bình:", "Lời thoại:", "MC:", "Người dẫn chuyện:"
     .replace(/(phân cảnh|cảnh|scene)\s*\d+\s*[:\-–.]/gi, '')
-    .replace(/(lời bình|lời thoại|thuyết minh|voiceover|narration|mc|người dẫn chuyện|hình ảnh|mô tả|kịch bản)\s*[:\-–.]/gi, '')
+    .replace(
+      /(lời bình|lời thoại|thuyết minh|voiceover|narration|mc|người dẫn chuyện|hình ảnh|mô tả|kịch bản)\s*[:\-–.]/gi,
+      ''
+    )
     // Clean markdown bold/bullets
     .replace(/[*#_~`]/g, '')
     // Collapse extra whitespaces
@@ -22,45 +29,154 @@ export function cleanExtraneousInstructions(text: string): string {
     .trim();
 }
 
-/**
- * Calculates reading duration in seconds for Vietnamese narration
- * duration_seconds = Math.max(5, Math.round(wordCount / 3.25 + 1))
- */
-export function calculateSceneDuration(narrationNormalized: string): number {
-  if (!narrationNormalized) return 5;
-  const wordCount = narrationNormalized.trim().split(/\s+/).filter(Boolean).length;
-  return Math.max(5, Math.round(wordCount / 3.25 + 1));
+const DIGITS_VI = ['không', 'một', 'hai', 'ba', 'bốn', 'năm', 'sáu', 'bảy', 'tám', 'chín'];
+
+function readThreeDigits(n: number, showZeroHundred: boolean): string {
+  const tram = Math.floor(n / 100);
+  const chuc = Math.floor((n % 100) / 10);
+  const donvi = n % 10;
+
+  const parts: string[] = [];
+
+  if (tram > 0 || showZeroHundred) {
+    parts.push(`${DIGITS_VI[tram]} trăm`);
+  }
+
+  if (chuc === 0 && donvi > 0) {
+    if (tram > 0 || showZeroHundred) {
+      parts.push('lẻ');
+    }
+    parts.push(DIGITS_VI[donvi]);
+  } else if (chuc === 1) {
+    parts.push('mười');
+    if (donvi === 5) {
+      parts.push('lăm');
+    } else if (donvi > 0) {
+      parts.push(DIGITS_VI[donvi]);
+    }
+  } else if (chuc > 1) {
+    parts.push(`${DIGITS_VI[chuc]} mươi`);
+    if (donvi === 1) {
+      parts.push('mốt');
+    } else if (donvi === 4) {
+      parts.push('tư');
+    } else if (donvi === 5) {
+      parts.push('lăm');
+    } else if (donvi > 0) {
+      parts.push(DIGITS_VI[donvi]);
+    }
+  }
+
+  return parts.join(' ');
 }
 
 /**
- * Fallback client-side normalizer to guarantee no raw digits slip through
+ * Converts any integer into natural spoken Vietnamese words
+ */
+export function numberToVietnameseWords(numStr: string): string {
+  // Remove thousand separators (dots or commas used between 3 digits, e.g. 3.260 or 4.000.000)
+  const cleanDigits = numStr.replace(/[.,](?=\d{3}\b)/g, '');
+
+  // Handle decimal comma/dot if remaining (e.g., 3,5 or 3.5)
+  if (cleanDigits.includes(',') || cleanDigits.includes('.')) {
+    const sep = cleanDigits.includes(',') ? ',' : '.';
+    const [intPart, decPart] = cleanDigits.split(sep);
+    return `${numberToVietnameseWords(intPart)} phẩy ${numberToVietnameseWords(decPart)}`;
+  }
+
+  const n = parseInt(cleanDigits, 10);
+  if (isNaN(n)) return numStr;
+  if (n === 0) return 'không';
+
+  const units = ['', 'nghìn', 'triệu', 'tỷ'];
+  const groups: number[] = [];
+  let temp = Math.abs(n);
+
+  while (temp > 0) {
+    groups.push(temp % 1000);
+    temp = Math.floor(temp / 1000);
+  }
+
+  const resultParts: string[] = [];
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const grp = groups[i];
+    if (grp > 0) {
+      const showZeroHundred = i < groups.length - 1;
+      const text = readThreeDigits(grp, showZeroHundred);
+      const unitLabel = units[i % 4];
+      resultParts.push(unitLabel ? `${text} ${unitLabel}` : text);
+    }
+  }
+
+  return resultParts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Calculates reading duration in seconds for Vietnamese narration
+ * Guarantees comfortable buffer so speech never gets cut off mid-sentence.
+ */
+export function calculateSceneDuration(narrationNormalized: string): number {
+  if (!narrationNormalized) return 6;
+  const wordCount = narrationNormalized.trim().split(/\s+/).filter(Boolean).length;
+  // ~2.85 words/sec + 2s breath buffer for smooth transition without cutting speech
+  return Math.max(6, Math.ceil(wordCount / 2.85 + 2));
+}
+
+/**
+ * Client-side normalizer to guarantee all digits & measurement units are converted to spoken Vietnamese words
  */
 export function normalizeVietnameseNumbers(text: string): string {
   if (!text) return '';
 
-  const units: Record<string, string> = {
-    km: 'ki-lô-mét',
-    m: 'mét',
-    cm: 'xen-ti-mét',
-    mm: 'mi-li-mét',
-    kg: 'ki-lô-gam',
-    g: 'gam',
-    '%': ' phần trăm',
+  const unitMap: Record<string, string> = {
+    'km2': 'ki-lô-mét vuông',
+    'km²': 'ki-lô-mét vuông',
+    'm2': 'mét vuông',
+    'm²': 'mét vuông',
+    'km/s': 'ki-lô-mét trên giây',
+    'km/h': 'ki-lô-mét trên giờ',
+    'm/s': 'mét trên giây',
+    'km': 'ki-lô-mét',
+    'cm': 'xen-ti-mét',
+    'mm': 'mi-li-mét',
+    'kg': 'ki-lô-gam',
     'ha': 'héc-ta',
-    '$': 'đô-la ',
     'usd': 'đô-la mỹ',
     'vnd': 'việt nam đồng',
-    'đ': 'đồng',
+    'vnđ': 'việt nam đồng',
   };
 
   let result = cleanExtraneousInstructions(text);
 
-  // Replace common units
-  result = result.replace(/(\d+)\s*(km|m|cm|mm|kg|g|ha|%)/gi, (_match, num, unit) => {
-    return `${num} ${units[unit.toLowerCase()] || unit}`;
+  // Replace compound units first
+  result = result.replace(
+    /(\d+(?:[.,]\d+)*)\s*(km2|km²|m2|m²|km\/s|km\/h|m\/s|km|cm|mm|kg|ha|usd|vnd|vnđ)\b/gi,
+    (_match, num, unit) => {
+      const spokenNum = numberToVietnameseWords(num);
+      const spokenUnit = unitMap[unit.toLowerCase()] || unit;
+      return `${spokenNum} ${spokenUnit}`;
+    }
+  );
+
+  // Replace standalone 'm' or 'g' or '%' when preceded by a number
+  result = result.replace(/(\d+(?:[.,]\d+)*)\s*%/g, (_m, num) => {
+    return `${numberToVietnameseWords(num)} phần trăm`;
   });
 
-  return result;
+  result = result.replace(/(\d+(?:[.,]\d+)*)\s*m\b/g, (_m, num) => {
+    return `${numberToVietnameseWords(num)} mét`;
+  });
+
+  result = result.replace(/(\d+(?:[.,]\d+)*)\s*g\b/g, (_m, num) => {
+    return `${numberToVietnameseWords(num)} gam`;
+  });
+
+  // Replace remaining standalone numbers (including formatted numbers like 4.000.000 or 1.600)
+  result = result.replace(/\b\d+(?:[.,]\d+)*\b/g, (numMatch) => {
+    return numberToVietnameseWords(numMatch);
+  });
+
+  return result.replace(/\s+/g, ' ').trim();
 }
 
 export interface AnalyzeScriptParams {
@@ -84,7 +200,7 @@ export function isStaticEnvironment(): boolean {
 
 /**
  * Proportionally adjusts scene durations to match targetDurationSec while guaranteeing
- * each scene duration >= reading duration of its narration
+ * each scene duration >= reading duration of its narration so voiceover never gets cut off.
  */
 export function scaleScenesToTargetDuration(scenes: Scene[], targetSec: number): Scene[] {
   if (!scenes || scenes.length === 0) return scenes;
@@ -93,7 +209,6 @@ export function scaleScenesToTargetDuration(scenes: Scene[], targetSec: number):
   const minDurations = scenes.map((s) => calculateSceneDuration(s.narration_normalized));
   const totalMin = minDurations.reduce((acc, d) => acc + d, 0);
 
-  // If target is larger than minimum speech time, distribute remaining time proportionally
   if (clampedTarget > totalMin) {
     const extraTime = clampedTarget - totalMin;
     return scenes.map((s, idx) => {
@@ -104,7 +219,6 @@ export function scaleScenesToTargetDuration(scenes: Scene[], targetSec: number):
       };
     });
   } else {
-    // Keep speech duration so narration doesn't get cut off!
     return scenes.map((s, idx) => ({
       ...s,
       duration_seconds: minDurations[idx],
@@ -149,7 +263,6 @@ export async function analyzeScript({
   onStatusUpdate?.('Đang gửi kịch bản vào Gemini API (Xoay vòng Multi-Key)...');
 
   return await keyRotationEngine.executeWithRotation(async (apiKey) => {
-    // If running on static host (GitHub Pages), call Google Generative Language REST API directly!
     if (isStatic) {
       if (!apiKey) {
         const preset = matchSamplePreset(cleanScript);
@@ -157,12 +270,17 @@ export async function analyzeScript({
         throw new Error('Vui lòng nhập Gemini API Key vào mục Quản Lý Keys trên GitHub Pages.');
       }
       onStatusUpdate?.('Đang gọi trực tiếp Gemini REST API (GitHub Pages Mode)...');
-      const resScenes = await callGeminiDirectRest(cleanScript, model, thinkingLevel, apiKey, targetDurationSec);
+      const resScenes = await callGeminiDirectRest(
+        cleanScript,
+        model,
+        thinkingLevel,
+        apiKey,
+        targetDurationSec
+      );
       return scaleScenesToTargetDuration(resScenes, targetDurationSec);
     }
 
     try {
-      // On fullstack Node.js server, call local backend proxy
       const response = await fetch('/api/gemini/generate', {
         method: 'POST',
         headers: {
@@ -196,14 +314,20 @@ export async function analyzeScript({
 
       const processedScenes: Scene[] = data.scenes.map((s: any, idx: number) => {
         const cleanNarration = cleanExtraneousInstructions(s.narration_vi || '');
-        const narrationNorm = s.narration_normalized || normalizeVietnameseNumbers(cleanNarration);
+        const narrationNorm = normalizeVietnameseNumbers(
+          s.narration_normalized || cleanNarration
+        );
         const duration = calculateSceneDuration(narrationNorm);
+        const fallbackKw =
+          extractVisualKeywordsFromVietnamese(cleanNarration) ||
+          'Vietnam nature landscape';
+
         return {
           scene_id: s.scene_id || idx + 1,
           title: s.title || `Phân cảnh ${idx + 1}`,
           narration_vi: cleanNarration,
           narration_normalized: narrationNorm,
-          search_keywords_en: s.search_keywords_en || 'vietnam landscape cinematic',
+          search_keywords_en: s.search_keywords_en || fallbackKw,
           camera_motion: s.camera_motion || 'zoom-in',
           lut_style: s.lut_style || 'cinematic-teal-orange',
           duration_seconds: duration,
@@ -212,10 +336,15 @@ export async function analyzeScript({
 
       return scaleScenesToTargetDuration(processedScenes, targetDurationSec);
     } catch (err: any) {
-      // Fallback for static hosts or direct client REST
       if ((err.status === 404 || err.message?.includes('404')) && apiKey) {
         onStatusUpdate?.('Đang chuyển hướng gọi trực tiếp Gemini REST API...');
-        const resScenes = await callGeminiDirectRest(cleanScript, model, thinkingLevel, apiKey, targetDurationSec);
+        const resScenes = await callGeminiDirectRest(
+          cleanScript,
+          model,
+          thinkingLevel,
+          apiKey,
+          targetDurationSec
+        );
         return scaleScenesToTargetDuration(resScenes, targetDurationSec);
       }
       throw err;
@@ -238,21 +367,24 @@ async function callGeminiDirectRest(
   const durationSec = Math.max(30, Math.min(300, targetDurationSec));
   const targetMin = Math.floor(durationSec / 60);
   const targetSecRem = durationSec % 60;
-  const durationDesc = `${targetMin > 0 ? `${targetMin} phút ` : ''}${targetSecRem > 0 ? `${targetSecRem} giây` : ''}`;
+  const durationDesc = `${targetMin > 0 ? `${targetMin} phút ` : ''}${
+    targetSecRem > 0 ? `${targetSecRem} giây` : ''
+  }`;
 
   const systemInstruction = `Bạn là Đạo diễn Phim Tài liệu và Biên kịch Video Hàng đầu.
 Phân tích kịch bản tiếng Việt thành mảng các phân cảnh điện ảnh chuẩn JSON theo schema.
 
 CÁC QUY TẮC BẮT BUỘC:
-1. ĐỘ DÀI MỤC TIÊU:
+1. ĐỘ DÀI MỤC TIÊU & LỜI THOẠI MƯỢT MÀ:
    - Tổng độ dài video yêu cầu là: ${durationSec} GIÂY (~${durationDesc}). Tối đa là 5 phút (300 giây).
-   - Hãy chia số phân cảnh và viết dung lượng lời bình tương ứng sao cho tổng thời gian các cảnh cộng lại xấp xỉ bằng ${durationSec} giây (tốc độ đọc ~3.25 từ/giây).
+   - Mỗi phân cảnh nên có từ 1 đến 2 câu lời bình rõ ràng, súc tích (khoảng 20-38 từ/cảnh) để người đọc lồng tiếng đọc lưu loát, tự nhiên, không bị hụt hơi.
 2. LƯỢC BỎ TỪ KHÔNG LIÊN QUAN ĐẾN LỜI THOẠI:
    - Trong 'narration_vi', TUYỆT ĐỐI LOẠI BỎ các chú thích kỹ thuật, ghi chú đạo diễn "[Cảnh 1]", "(nhạc dạo)", "MC:", "Người dẫn chuyện:". CHỈ GIỮ LẠI LỜI BÌNH NGUYÊN BẢN trong trẻo để đọc và làm phụ đề.
-3. HÌNH ẢNH LIÊN QUAN TRỰC TIẾP (search_keywords_en):
-   - Chứa 2-3 từ khóa tiếng Anh miêu tả đúng danh từ/chủ thể trọng tâm của phân cảnh đó để tìm kiếm ảnh Wikimedia Commons.
+3. HÌNH ẢNH BẮT BUỘC PHẢI LIÊN QUAN TRỰC TIẾP ĐẾN NỘI DUNG CHỈ DẪN (search_keywords_en):
+   - 'search_keywords_en' PHẢI chứa 2-4 danh từ cụ thể bằng tiếng Anh miêu tả ĐÚNG VẬT THỂ / ĐỊA DANH / ĐỘNG VẬT / HIỆN TƯỢNG xuất hiện trong lời thoại của phân cảnh đó để tìm kiếm ảnh thật trên Wikimedia Commons.
+   - TUYỆT ĐỐI KHÔNG dùng các từ trừu tượng hoặc lặp lại cùng một từ khóa cho nhiều cảnh khác nhau. Mỗi cảnh phải có từ khóa hình ảnh riêng biệt sát với câu thoại của cảnh đó.
 4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ (narration_normalized):
-   - Tự động chuẩn hóa 100% mọi số, đơn vị, ngày tháng sang chữ tiếng Việt đầy đủ.`;
+   - Tự động chuyển đổi 100% mọi con số, đơn vị, ngày tháng sang chữ tiếng Việt đầy đủ để đọc trôi chảy.`;
 
   const requestBody: any = {
     contents: [
@@ -282,7 +414,12 @@ CÁC QUY TẮC BẮT BUỘC:
             },
             lut_style: {
               type: 'STRING',
-              enum: ['cinematic-teal-orange', 'warm-golden', 'natural-documentary', 'high-contrast'],
+              enum: [
+                'cinematic-teal-orange',
+                'warm-golden',
+                'natural-documentary',
+                'high-contrast',
+              ],
             },
           },
           required: [
@@ -329,13 +466,15 @@ CÁC QUY TẮC BẮT BUỘC:
 
   return scenesRaw.map((s: any, idx: number) => {
     const cleanNarration = cleanExtraneousInstructions(s.narration_vi || '');
-    const norm = s.narration_normalized || normalizeVietnameseNumbers(cleanNarration);
+    const norm = normalizeVietnameseNumbers(s.narration_normalized || cleanNarration);
+    const fallbackKw =
+      extractVisualKeywordsFromVietnamese(cleanNarration) || 'Vietnam documentary nature';
     return {
       scene_id: s.scene_id || idx + 1,
       title: s.title || `Phân cảnh ${idx + 1}`,
       narration_vi: cleanNarration,
       narration_normalized: norm,
-      search_keywords_en: s.search_keywords_en || 'vietnam landscape documentary',
+      search_keywords_en: s.search_keywords_en || fallbackKw,
       camera_motion: s.camera_motion || 'zoom-in',
       lut_style: s.lut_style || 'cinematic-teal-orange',
       duration_seconds: calculateSceneDuration(norm),

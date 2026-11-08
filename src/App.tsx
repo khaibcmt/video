@@ -11,7 +11,7 @@ import {
   normalizeVietnameseNumbers,
   scaleScenesToTargetDuration,
 } from './services/scriptAnalyzer';
-import { searchWikimediaCommons, loadImageWithFallback } from './services/mediaLoader';
+import { fetchVerifiedSceneMedia } from './services/mediaLoader';
 import { audioEngine } from './services/audioEngine';
 
 // Default initial scenes so the application opens immediately ready to play with no blank screen!
@@ -24,7 +24,7 @@ const INITIAL_SCENES: Scene[] = [
     search_keywords_en: 'Ha Long Bay limestone cliffs vietnam',
     camera_motion: 'zoom-in',
     lut_style: 'cinematic-teal-orange',
-    duration_seconds: 9,
+    duration_seconds: 10,
   },
   {
     scene_id: 2,
@@ -44,7 +44,7 @@ const INITIAL_SCENES: Scene[] = [
     search_keywords_en: 'Ha Long Bay floating fishing village emerald water',
     camera_motion: 'zoom-out',
     lut_style: 'natural-documentary',
-    duration_seconds: 10,
+    duration_seconds: 11,
   },
 ];
 
@@ -64,35 +64,60 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
 
-  // Preload images for scenes
+  // Preload both relevant Wikimedia images (without duplicates) and fluent TTS audio buffers for scenes
   const loadMediaForScenes = useCallback(async (scenesToLoad: Scene[]) => {
-    const updatedScenes = [...scenesToLoad];
+    const usedUrls = new Set<string>();
 
-    await Promise.allSettled(
-      updatedScenes.map(async (scene, index) => {
-        try {
-          const imageUrl = await searchWikimediaCommons(scene.search_keywords_en);
-          if (imageUrl) {
-            const imgElement = await loadImageWithFallback(imageUrl);
-            setScenes((prev) => {
-              const copy = [...prev];
-              if (copy[index]) {
-                copy[index] = {
-                  ...copy[index],
-                  imageUrl,
-                  imageElement: imgElement,
-                  imageLoaded: true,
-                  imageFailed: false,
-                };
-              }
-              return copy;
-            });
-          }
-        } catch {
-          // Keep procedural background fallback
+    // 1. Pre-warm Vietnamese TTS AudioBuffers in parallel and adjust scene duration if audio is longer
+    audioEngine
+      .preloadNarrations(scenesToLoad.map((s) => s.narration_normalized))
+      .then((audioDurations) => {
+        setScenes((prev) => {
+          let changed = false;
+          const next = prev.map((sc, idx) => {
+            const actualSec = audioDurations[idx];
+            // Add 1.2s breathing space after speech finishes before transitioning scene
+            if (actualSec && Math.ceil(actualSec + 1.2) > sc.duration_seconds) {
+              changed = true;
+              return {
+                ...sc,
+                duration_seconds: Math.ceil(actualSec + 1.2),
+              };
+            }
+            return sc;
+          });
+          return changed ? next : prev;
+        });
+      })
+      .catch(() => {});
+
+    // 2. Sequentially resolve distinct, high-relevance Wikimedia images per scene so usedUrls prevents duplicates
+    for (let index = 0; index < scenesToLoad.length; index++) {
+      const scene = scenesToLoad[index];
+      try {
+        const media = await fetchVerifiedSceneMedia(
+          scene.search_keywords_en,
+          scene.narration_vi,
+          usedUrls
+        );
+        if (media) {
           setScenes((prev) => {
             const copy = [...prev];
-            if (copy[index]) {
+            if (copy[index] && copy[index].scene_id === scene.scene_id) {
+              copy[index] = {
+                ...copy[index],
+                imageUrl: media.imageUrl,
+                imageElement: media.imageElement,
+                imageLoaded: true,
+                imageFailed: false,
+              };
+            }
+            return copy;
+          });
+        } else {
+          setScenes((prev) => {
+            const copy = [...prev];
+            if (copy[index] && copy[index].scene_id === scene.scene_id) {
               copy[index] = {
                 ...copy[index],
                 imageLoaded: false,
@@ -102,8 +127,20 @@ export default function App() {
             return copy;
           });
         }
-      })
-    );
+      } catch {
+        setScenes((prev) => {
+          const copy = [...prev];
+          if (copy[index] && copy[index].scene_id === scene.scene_id) {
+            copy[index] = {
+              ...copy[index],
+              imageLoaded: false,
+              imageFailed: true,
+            };
+          }
+          return copy;
+        });
+      }
+    }
   }, []);
 
   // Preload initial scenes images on mount

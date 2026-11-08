@@ -127,22 +127,22 @@ async function startServer() {
 Nhiệm vụ của bạn là nhận kịch bản hoặc chỉ dẫn từ người dùng và phân tích thành các phân cảnh điện ảnh (scenes) hoàn chỉnh.
 
 CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
-1. KHỚP ĐỘ DÀI MỤC TIÊU CỦA VIDEO:
+1. KHỚP ĐỘ DÀI MỤC TIÊU & NHỊP ĐỌC LƯU LOÁT:
    - Tổng độ dài video người dùng yêu cầu là: ${durationSec} GIÂY (~${durationDisplay}). Tối đa là 5 phút (300 giây).
-   - Hãy tính toán số lượng phân cảnh và dung lượng lời bình của mỗi phân cảnh sao cho tổng thời gian các phân cảnh cộng lại xấp xỉ bằng ${durationSec} giây.
-   - Ước tính tốc độ đọc tự nhiên của người Việt là khoảng 3 đến 3.5 từ mỗi giây.
-   - Thời lượng mỗi cảnh (duration_seconds) phải khớp hoàn hảo với độ dài lời bình của cảnh đó: duration_seconds = Math.max(5, Math.round(wordCount / 3.25 + 1)).
+   - Mỗi phân cảnh nên có từ 1 đến 2 câu lời bình mạch lạc, giàu hình ảnh (khoảng 18 đến 38 từ mỗi cảnh) để giọng đọc lồng tiếng phát âm trôi chảy, lưu loát, tự nhiên, không bị hụt hơi hay vấp chữ.
+   - Tổng thời lượng các phân cảnh cộng lại xấp xỉ bằng ${durationSec} giây.
 
 2. LƯỢC BỎ TỪ KHÔNG LIÊN QUAN ĐẾN LỜI THOẠI:
    - Trong 'narration_vi': TUYỆT ĐỐI LOẠI BỎ mọi ghi chú kỹ thuật, hướng dẫn đạo diễn, ký hiệu kịch bản như "[Cảnh 1]", "(Nhạc nền du dương)", "MC:", "Người dẫn chuyện:", "Hình ảnh:...", các câu lệnh chỉ dẫn của người dùng.
    - CHỈ GIỮ LẠI LỜI BÌNH / LỜI THOẠI NGUYÊN BẢN trong trẻo, tự nhiên, truyền cảm để đọc và hiển thị phụ đề.
 
-3. HÌNH ẢNH PHẢI LIÊN QUAN TRỰC TIẾP ĐẾN NỘI DUNG PHÂN CẢNH (search_keywords_en):
-   - 'search_keywords_en': Phải chứa 2-3 danh từ cụ thể bằng tiếng Anh mô tả CHỦ THỂ HÌNH ẢNH TRỌNG TÂM của riêng phân cảnh đó để tìm kiếm ảnh trên Wikimedia Commons.
-   - Ví dụ: nếu lời thoại nói về "động Thiên Cung với thạch nhũ lung linh", từ khóa phải là "Thien Cung cave stalactite", không dùng từ chung chung mơ hồ như "vietnam beauty landscape".
+3. HÌNH ẢNH BẮT BUỘC PHẢI LIÊN QUAN TRỰC TIẾP ĐẾN NỘI DUNG PHÂN CẢNH (search_keywords_en):
+   - 'search_keywords_en': Phải chứa 2-4 danh từ cụ thể bằng tiếng Anh mô tả ĐÚNG VẬT THỂ, ĐỘNG VẬT, ĐỊA DANH hoặc HIỆN TƯỢNG xuất hiện trực tiếp trong câu thoại của phân cảnh đó để tìm kiếm ảnh thật trên Wikimedia Commons.
+   - TUYỆT ĐỐI KHÔNG dùng từ trừu tượng và KHÔNG lặp lại cùng một cụm từ khóa cho nhiều phân cảnh.
+   - Ví dụ: nếu lời thoại nói về "chú rùa biển bơi lội giữa rạn san hô", từ khóa bắt buộc là "sea turtle coral reef ocean", hoặc nói về "động Thiên Cung thạch nhũ", từ khóa là "Thien Cung cave stalactite".
 
 4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ THÀNH CHỮ TIẾNG VIỆT (narration_normalized):
-   - TỰ ĐỘNG CHUYỂN ĐỔI 100% các số, ngày tháng, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy phát âm chuẩn xác.
+   - TỰ ĐỘNG CHUYỂN ĐỔI 100% các con số, ngày tháng, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy phát âm chuẩn xác, không bị khựng.
      Ví dụ: "3.260 km" -> "ba nghìn hai trăm sáu mươi ki-lô-mét", "160" -> "một trăm sáu mươi", "1975" -> "năm một nghìn chín trăm bảy mươi lăm".
 `;
 

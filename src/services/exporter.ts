@@ -124,8 +124,17 @@ export async function exportVideo(
     throw new Error('Chưa có phân cảnh nào để xuất video.');
   }
 
-  // Ensure audio context is ready
+  // Ensure audio context is ready and preload all scene narrations first so export has zero network lag
   await audioEngine.ensureContext();
+  onProgress({
+    isExporting: true,
+    progressPercent: 1,
+    currentSceneIndex: 0,
+    totalScenes: scenes.length,
+    timeRemainingSec: scenes.reduce((acc, s) => acc + s.duration_seconds, 0),
+    statusText: 'Đang nạp sẵn toàn bộ giọng đọc tiếng Việt chất lượng cao...',
+  });
+  await audioEngine.preloadNarrations(scenes.map((s) => s.narration_normalized));
 
   const renderer = new CanvasRenderer(canvas);
   const canvasStream = canvas.captureStream(30);
@@ -239,7 +248,7 @@ export async function exportVideo(
 
       accumulatedTime =
         scenes.slice(0, currentSceneIndex).reduce((acc, s) => acc + s.duration_seconds, 0) +
-        sceneElapsed;
+        Math.min(sceneElapsed, sceneDuration);
 
       const progressPercent = Math.min(99, Math.round((accumulatedTime / totalDurationSec) * 100));
       const timeRemaining = Math.max(0, Math.round(totalDurationSec - accumulatedTime));
@@ -253,11 +262,14 @@ export async function exportVideo(
         statusText: `Đang render phân cảnh ${currentSceneIndex + 1}/${scenes.length} [${format.toUpperCase()}]: ${scene.title}`,
       });
 
-      // Transition check (last 0.8s)
+      // Transition check (last 0.8s, only after voiceover completes)
       const transitionDuration = 0.8;
       const timeLeftInScene = sceneDuration - sceneElapsed;
       const isTransitioning =
-        currentSceneIndex < scenes.length - 1 && timeLeftInScene < transitionDuration;
+        currentSceneIndex < scenes.length - 1 &&
+        timeLeftInScene < transitionDuration &&
+        timeLeftInScene > 0 &&
+        !audioEngine.isCurrentlySpeaking();
       const transitionProgress = isTransitioning
         ? 1.0 - timeLeftInScene / transitionDuration
         : 0;
@@ -274,13 +286,16 @@ export async function exportVideo(
         showTitleCard: false,
       });
 
-      if (sceneElapsed >= sceneDuration) {
-        // Move to next scene
+      const voiceStillSpeaking = audioEngine.isCurrentlySpeaking();
+      if (
+        (sceneElapsed >= sceneDuration && !voiceStillSpeaking) ||
+        sceneElapsed >= sceneDuration + 8
+      ) {
+        // Move to next scene only after narration finishes cleanly
         currentSceneIndex++;
         sceneStartTime = performance.now();
 
         if (currentSceneIndex < scenes.length) {
-          // Play next narration
           const nextSceneObj = scenes[currentSceneIndex];
           audioEngine.playVietnameseNarration(nextSceneObj.narration_normalized);
         }

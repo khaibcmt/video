@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { Scene, CameraMotion, LutStyle } from '../types';
 import { audioEngine } from '../services/audioEngine';
-import { searchWikimediaCommons, loadImageWithFallback } from '../services/mediaLoader';
+import { fetchVerifiedSceneMedia } from '../services/mediaLoader';
 import { calculateSceneDuration, normalizeVietnameseNumbers } from '../services/scriptAnalyzer';
 
 interface SceneListEditorProps {
@@ -55,20 +55,29 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
 
   const handleRefetchImage = async (index: number, keywords: string) => {
     try {
-      const url = await searchWikimediaCommons(keywords);
-      if (url) {
-        const img = await loadImageWithFallback(url);
+      const scene = scenes[index];
+      const usedUrls = new Set<string>(
+        scenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u))
+      );
+      const media = await fetchVerifiedSceneMedia(
+        keywords,
+        scene?.narration_vi,
+        usedUrls
+      );
+      if (media) {
         onUpdateScene(index, {
-          imageUrl: url,
-          imageElement: img,
+          imageUrl: media.imageUrl,
+          imageElement: media.imageElement,
           imageLoaded: true,
           imageFailed: false,
         });
       } else {
-        alert('Không tìm thấy ảnh trên Wikimedia Commons cho từ khóa này. Hệ thống sẽ áp dụng nền Procedural Canvas.');
+        onUpdateScene(index, {
+          imageLoaded: false,
+          imageFailed: true,
+        });
       }
     } catch {
-      // Procedural fallback
       onUpdateScene(index, {
         imageLoaded: false,
         imageFailed: true,

@@ -5,6 +5,9 @@ interface WikimediaImageResult {
   thumbUrl: string;
   mime: string;
   title: string;
+  width: number;
+  height: number;
+  score: number;
 }
 
 const imageCache = new Map<string, HTMLImageElement>();
@@ -18,17 +21,141 @@ const isStaticHost =
     (window.location.port !== '3000' && !window.location.hostname.includes('run.app')));
 
 /**
- * Searches Wikimedia Commons for royalty-free images matching the keywords
- * Uses iiurlwidth=1280 to retrieve lightweight 1280px thumbnails directly from Wikimedia CDN
+ * Dictionary of common Vietnamese topic keywords mapped to precise English photographic search terms
+ * so that even if Vietnamese words appear or fallback is needed, the search finds exact imagery.
  */
-export async function searchWikimediaCommons(keyword: string): Promise<string | null> {
-  if (!keyword || !keyword.trim()) return null;
+const VIETNAMESE_TO_ENGLISH_VISUAL_MAP: Record<string, string> = {
+  'hạ long': 'Ha Long Bay limestone islands',
+  'vịnh hạ long': 'Ha Long Bay limestone islands',
+  'thiên cung': 'Thien Cung Cave stalactites',
+  'sửng sốt': 'Sung Sot Cave Ha Long',
+  'làng chài': 'floating fishing village Vietnam',
+  'rùa': 'sea turtle swimming ocean',
+  'con rùa': 'tortoise turtle nature',
+  'hồ gươm': 'Hoan Kiem Lake Turtle Tower Hanoi',
+  'hà nội': 'Hanoi Old Quarter Hoan Kiem Lake',
+  'sài gòn': 'Ho Chi Minh City skyline',
+  'hồ chí minh': 'Ho Chi Minh City landmark',
+  'đà nẵng': 'Golden Bridge Ba Na Hills Da Nang',
+  'hội an': 'Hoi An ancient town lanterns',
+  'huế': 'Imperial City Hue Citadel Vietnam',
+  'sapa': 'Sapa terraced rice fields mountains',
+  'ruộng bậc thang': 'terraced rice fields Mu Cang Chai',
+  'tây nguyên': 'Central Highlands Vietnam coffee',
+  'buôn ma thuột': 'Buon Ma Thuot coffee plantation',
+  'cà phê': 'coffee beans plantation harvest',
+  'phin cà phê': 'Vietnamese drip phin coffee',
+  'phở': 'Vietnamese Pho noodle soup',
+  'bánh mì': 'Vietnamese Banh Mi sandwich',
+  'áo dài': 'Vietnamese Ao Dai traditional dress',
+  'tết': 'Lunar New Year peach blossom Vietnam',
+  'trống đồng': 'Dong Son bronze drum Vietnam',
+  'tơ lụa': 'Silk Road camel caravan desert',
+  'lạc đà': 'camel caravan Sahara desert dunes',
+  'sa mạc': 'sand dunes desert sunset',
+  'hố đen': 'black hole accretion disk space',
+  'vũ trụ': 'deep space galaxy nebula stars',
+  'ngân hà': 'Milky Way galaxy night sky',
+  'mặt trời': 'Sun solar flare astronomy',
+  'trái đất': 'Planet Earth from space',
+  'mặt trăng': 'Full Moon craters astronomy',
+  'rừng': 'tropical rainforest canopy nature',
+  'biển': 'turquoise ocean waves coral reef',
+  'đại dương': 'deep blue ocean marine life',
+  'núi': 'majestic mountain peaks clouds',
+  'sông mê kông': 'Mekong Delta floating market boats',
+  'miền tây': 'Mekong Delta river boats Vietnam',
+  'chùa một cột': 'One Pillar Pagoda Hanoi',
+  'văn miếu': 'Temple of Literature Hanoi',
+  'phong nha': 'Phong Nha Cave underground river',
+  'sơn đoòng': 'Son Doong Cave giant cavern',
+  'ninh bình': 'Trang An Ninh Binh karst river',
+  'tràng an': 'Trang An boat tour limestone',
+  'phú quốc': 'Phu Quoc island beach palm trees',
+  'nha trang': 'Nha Trang beach bay island',
+  'đà lạt': 'Da Lat pine forest misty lake',
+  'lịch sử': 'ancient historical monument citadel',
+  'công nghệ': 'modern technology microchip circuit',
+  'trí tuệ nhân tạo': 'artificial intelligence robotics',
+  'y tế': 'medical science laboratory doctor',
+  'giáo dục': 'university library books students',
+  'nông nghiệp': 'green rice paddy field farmers',
+};
 
+/**
+ * Extracts fallback English visual keywords from Vietnamese text if primary keywords are too generic
+ */
+export function extractVisualKeywordsFromVietnamese(viText: string): string | null {
+  if (!viText) return null;
+  const lower = viText.toLowerCase();
+  const matchedTerms: string[] = [];
+
+  for (const [viKey, enVal] of Object.entries(VIETNAMESE_TO_ENGLISH_VISUAL_MAP)) {
+    if (lower.includes(viKey)) {
+      matchedTerms.push(enVal);
+      if (matchedTerms.length >= 2) break;
+    }
+  }
+
+  return matchedTerms.length > 0 ? matchedTerms.join(' ') : null;
+}
+
+/**
+ * Cleans and normalizes English search keywords for Wikimedia Commons
+ */
+function sanitizeSearchKeywords(raw: string): string {
+  return raw
+    .replace(/[\[\]\(\)"'#$*.,;!?/\\]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        w.length > 1 &&
+        ![
+          'cinematic',
+          'photography',
+          'photo',
+          'picture',
+          'image',
+          'footage',
+          'video',
+          'scene',
+          'shot',
+          'view',
+          'high',
+          'quality',
+          '4k',
+          'hd',
+          'the',
+          'and',
+          'with',
+          'for',
+          'from',
+          'into',
+          'over',
+        ].includes(w.toLowerCase())
+    )
+    .slice(0, 5)
+    .join(' ');
+}
+
+/**
+ * Searches Wikimedia Commons for relevant, landscape-oriented photographs matching the scene's content.
+ * Avoids reused URLs via `usedUrls` set so every scene gets a distinct, relevant visual.
+ */
+export async function searchWikimediaCommons(
+  keyword: string,
+  narrationVi?: string,
+  usedUrls?: Set<string>
+): Promise<string | null> {
   const trySearch = async (queryStr: string): Promise<string | null> => {
+    if (!queryStr || !queryStr.trim()) return null;
     try {
+      // Request filetype:bitmap to strictly get real photographs (no SVGs, PDFs, or audio)
+      const searchExpr = `${queryStr.trim()} filetype:bitmap`;
       const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
-        queryStr
-      )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=1280&gsrlimit=8&format=json&origin=*`;
+        searchExpr
+      )}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime|dimensions&iiurlwidth=1280&gsrlimit=15&format=json&origin=*`;
 
       const res = await fetch(endpoint, {
         headers: { Accept: 'application/json' },
@@ -38,60 +165,144 @@ export async function searchWikimediaCommons(keyword: string): Promise<string | 
       const pages = data?.query?.pages;
       if (!pages) return null;
 
-      const validImages: WikimediaImageResult[] = [];
+      const queryTokens = queryStr
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t.length > 2);
+
+      const candidates: WikimediaImageResult[] = [];
+
       Object.values(pages).forEach((page: any) => {
         const info = page?.imageinfo?.[0];
-        if (info && (info.thumburl || info.url)) {
-          const mime = (info.mime || '').toLowerCase();
-          const url = info.thumburl || info.url;
+        if (!info || (!info.thumburl && !info.url)) return;
 
-          // Filter out svgs, tiffs, pdfs, audio/video
-          if (
-            !url.endsWith('.svg') &&
-            !url.endsWith('.tif') &&
-            !url.endsWith('.tiff') &&
-            !url.endsWith('.ogg') &&
-            !url.endsWith('.pdf') &&
-            (mime.includes('jpeg') || mime.includes('jpg') || mime.includes('png') || mime.includes('webp') || url.includes('.jpg') || url.includes('.png'))
-          ) {
-            validImages.push({
-              url: info.url,
-              thumbUrl: info.thumburl || info.url,
-              mime: info.mime || 'image/jpeg',
-              title: page.title || '',
-            });
+        const mime = (info.mime || '').toLowerCase();
+        const url: string = info.thumburl || info.url;
+        const title: string = (page.title || '').toLowerCase();
+        const width: number = info.width || 1280;
+        const height: number = info.height || 720;
+
+        // Skip non-photo formats, icons, maps, diagrams, logos, stamps, signatures
+        if (
+          url.endsWith('.svg') ||
+          url.endsWith('.tif') ||
+          url.endsWith('.tiff') ||
+          url.endsWith('.gif') ||
+          url.endsWith('.ogg') ||
+          url.endsWith('.webm') ||
+          url.endsWith('.pdf') ||
+          title.includes('icon') ||
+          title.includes('logo') ||
+          title.includes('map of') ||
+          title.includes('locator') ||
+          title.includes('diagram') ||
+          title.includes('chart') ||
+          title.includes('signature') ||
+          title.includes('coat of arms') ||
+          title.includes('flag of') ||
+          title.includes('stamp') ||
+          !(mime.includes('jpeg') || mime.includes('jpg') || mime.includes('png') || mime.includes('webp'))
+        ) {
+          return;
+        }
+
+        // Skip tiny images
+        if (width < 500 || height < 350) return;
+
+        // Calculate relevance & cinematic aspect ratio score
+        let score = 0;
+
+        // Prefer landscape orientation (width >= height) for 16:9 video canvas
+        const aspect = width / height;
+        if (aspect >= 1.25 && aspect <= 2.2) {
+          score += 30; // Ideal 16:9 / 4:3 / 3:2 landscape photograph
+        } else if (aspect >= 1.0) {
+          score += 10;
+        } else {
+          score -= 15; // Portrait images get lower priority
+        }
+
+        // Prefer JPEG photographs over PNG graphics
+        if (mime.includes('jpeg') || mime.includes('jpg')) {
+          score += 15;
+        }
+
+        // Match query tokens in file title
+        for (const token of queryTokens) {
+          if (title.includes(token)) {
+            score += 12;
           }
         }
+
+        // Penalize already-used URLs so consecutive scenes don't show identical photos
+        if (usedUrls && (usedUrls.has(url) || usedUrls.has(info.url))) {
+          score -= 100;
+        }
+
+        candidates.push({
+          url: info.url,
+          thumbUrl: url,
+          mime,
+          title: page.title || '',
+          width,
+          height,
+          score,
+        });
       });
 
-      return validImages.length > 0 ? (validImages[0].thumbUrl || validImages[0].url) : null;
+      if (candidates.length === 0) return null;
+
+      // Sort by highest relevance & landscape score
+      candidates.sort((a, b) => b.score - a.score);
+      const chosen = candidates[0].thumbUrl || candidates[0].url;
+      if (usedUrls) {
+        usedUrls.add(chosen);
+        usedUrls.add(candidates[0].url);
+      }
+      return chosen;
     } catch {
       return null;
     }
   };
 
-  // Clean query: remove special characters, filler words, isolate concrete nouns
-  const cleanKeyword = keyword
-    .replace(/[\[\]\(\)"'#$*]/g, '')
-    .trim()
-    .split(/\s+/)
-    .filter(
-      (w) =>
-        !['cinematic', 'photography', 'photo', 'picture', 'image', 'the', 'a', 'an'].includes(
-          w.toLowerCase()
-        )
-    )
-    .slice(0, 4)
-    .join(' ');
+  // Build progressive search queries from most specific to broader visual nouns
+  const queriesToTry: string[] = [];
 
-  // 1. First attempt with cleaned keywords
-  const result = await trySearch(cleanKeyword);
-  if (result) return result;
+  const cleanedEn = sanitizeSearchKeywords(keyword || '');
+  if (cleanedEn) {
+    queriesToTry.push(cleanedEn);
+    const words = cleanedEn.split(' ');
+    if (words.length > 3) {
+      queriesToTry.push(words.slice(0, 3).join(' '));
+    }
+    if (words.length > 2) {
+      queriesToTry.push(words.slice(0, 2).join(' '));
+    }
+  }
 
-  // 2. Fallback attempt with primary 2 visual nouns
-  const primaryNouns = cleanKeyword.split(' ').slice(0, 2).join(' ');
-  if (primaryNouns && primaryNouns !== cleanKeyword) {
-    return await trySearch(primaryNouns);
+  // Also check Vietnamese narration for direct visual subject mapping
+  if (narrationVi) {
+    const mappedFromVi = extractVisualKeywordsFromVietnamese(narrationVi);
+    if (mappedFromVi && !queriesToTry.includes(mappedFromVi)) {
+      queriesToTry.push(mappedFromVi);
+    }
+  }
+
+  // Last-resort single main noun if multi-word queries returned nothing
+  if (cleanedEn) {
+    const firstTwo = cleanedEn.split(' ').slice(0, 2).join(' ');
+    if (firstTwo && !queriesToTry.includes(firstTwo)) {
+      queriesToTry.push(firstTwo);
+    }
+    const mainNoun = cleanedEn.split(' ').find((w) => w.length >= 4);
+    if (mainNoun && !queriesToTry.includes(mainNoun)) {
+      queriesToTry.push(mainNoun);
+    }
+  }
+
+  for (const q of queriesToTry) {
+    const foundUrl = await trySearch(q);
+    if (foundUrl) return foundUrl;
   }
 
   return null;
@@ -103,7 +314,7 @@ export async function searchWikimediaCommons(keyword: string): Promise<string | 
  */
 export function loadImageWithFallback(
   imageUrl: string,
-  timeoutMs: number = 6000
+  timeoutMs: number = 7000
 ): Promise<HTMLImageElement> {
   if (imageCache.has(imageUrl)) {
     return Promise.resolve(imageCache.get(imageUrl)!);
@@ -130,7 +341,7 @@ export function loadImageWithFallback(
     img.onerror = () => {
       cleanup();
 
-      // Only attempt local proxy if running on fullstack Node.js server (not GitHub Pages)
+      // Attempt local proxy if running on fullstack Node.js server
       if (!isStaticHost) {
         const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
         const proxyImg = new Image();
@@ -158,6 +369,45 @@ export function loadImageWithFallback(
 
     img.src = imageUrl;
   });
+}
+
+/**
+ * Searches and loads a verified working HTMLImageElement for a scene.
+ * If the first image fails to load, tries alternative search queries before falling back.
+ */
+export async function fetchVerifiedSceneMedia(
+  keywordsEn: string,
+  narrationVi?: string,
+  usedUrls?: Set<string>
+): Promise<{ imageUrl: string; imageElement: HTMLImageElement } | null> {
+  const firstUrl = await searchWikimediaCommons(keywordsEn, narrationVi, usedUrls);
+  if (firstUrl) {
+    try {
+      const img = await loadImageWithFallback(firstUrl);
+      return { imageUrl: firstUrl, imageElement: img };
+    } catch {
+      // First image failed to decode or timed out; try next candidate
+    }
+  }
+
+  // Second attempt with Vietnamese visual mapping or simplified keywords
+  const backupQuery =
+    extractVisualKeywordsFromVietnamese(narrationVi || '') ||
+    keywordsEn.split(/\s+/).slice(0, 2).join(' ');
+
+  if (backupQuery) {
+    const secondUrl = await searchWikimediaCommons(backupQuery, undefined, usedUrls);
+    if (secondUrl) {
+      try {
+        const img = await loadImageWithFallback(secondUrl);
+        return { imageUrl: secondUrl, imageElement: img };
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  return null;
 }
 
 /**

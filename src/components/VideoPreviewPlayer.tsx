@@ -106,82 +106,104 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
   const startPlayback = async (fromSeconds: number = currentTimeSec) => {
     if (scenes.length === 0) return;
 
+    // Cancel any existing animation frame & speech first to prevent overlapping loops
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    audioEngine.stopVoiceover();
+
     await audioEngine.ensureContext();
     if (!isMuted) {
       audioEngine.startBackgroundMusic();
     }
 
     setIsPlaying(true);
-    playStartTimeRef.current = performance.now() - fromSeconds * 1000;
-    currentOffsetSecRef.current = fromSeconds;
 
-    // Determine starting scene
+    // Determine starting scene and scene offset
     let accTime = 0;
     let startIdx = 0;
+    let initialSceneElapsed = 0;
     for (let i = 0; i < scenes.length; i++) {
       if (fromSeconds >= accTime && fromSeconds < accTime + scenes[i].duration_seconds) {
         startIdx = i;
+        initialSceneElapsed = fromSeconds - accTime;
         break;
       }
       accTime += scenes[i].duration_seconds;
     }
+
     setActiveSceneIdx(startIdx);
     onSelectScene(startIdx);
 
-    // Play narration for the current scene if near start
+    // Trigger narration for the current scene
     if (!isMuted) {
       audioEngine.playVietnameseNarration(scenes[startIdx].narration_normalized);
     }
 
-    let lastSceneTriggered = startIdx;
+    let currentIdx = startIdx;
+    let sceneStartTimestamp = performance.now() - initialSceneElapsed * 1000;
 
     const tick = () => {
       const now = performance.now();
-      const elapsedTotal = (now - playStartTimeRef.current) / 1000;
-
-      if (elapsedTotal >= totalDuration) {
-        // Finished video playback
+      const currentScene = scenes[currentIdx];
+      if (!currentScene) {
         pausePlayback();
-        setCurrentTimeSec(0);
-        setActiveSceneIdx(0);
-        renderCurrentStaticFrame(0, 0);
         return;
       }
 
+      const sceneElapsed = (now - sceneStartTimestamp) / 1000;
+      const baseDuration = currentScene.duration_seconds;
+
+      // Calculate total elapsed time for scrubber bar
+      const priorDuration = scenes
+        .slice(0, currentIdx)
+        .reduce((acc, s) => acc + s.duration_seconds, 0);
+      const elapsedTotal = Math.min(
+        totalDuration,
+        priorDuration + Math.min(sceneElapsed, baseDuration)
+      );
       setCurrentTimeSec(elapsedTotal);
 
-      // Locate active scene and progress
-      let accumulated = 0;
-      let currentIdx = 0;
-      let sceneElapsed = 0;
+      // Check if scene time is up AND voiceover has finished speaking (prevents cutting off mid-sentence!)
+      const voiceStillSpeaking = !isMuted && audioEngine.isCurrentlySpeaking();
+      const maxGracePeriod = baseDuration + 8; // safety cap
 
-      for (let i = 0; i < scenes.length; i++) {
-        const dur = scenes[i].duration_seconds;
-        if (elapsedTotal >= accumulated && elapsedTotal < accumulated + dur) {
-          currentIdx = i;
-          sceneElapsed = elapsedTotal - accumulated;
-          break;
+      if (
+        (sceneElapsed >= baseDuration && !voiceStillSpeaking) ||
+        sceneElapsed >= maxGracePeriod
+      ) {
+        // Advance to next scene
+        if (currentIdx + 1 >= scenes.length) {
+          pausePlayback();
+          setCurrentTimeSec(0);
+          setActiveSceneIdx(0);
+          renderCurrentStaticFrame(0, 0);
+          return;
         }
-        accumulated += dur;
-      }
 
-      if (currentIdx !== lastSceneTriggered) {
-        lastSceneTriggered = currentIdx;
+        currentIdx++;
+        sceneStartTimestamp = performance.now();
         setActiveSceneIdx(currentIdx);
         onSelectScene(currentIdx);
+
         if (!isMuted) {
           audioEngine.playVietnameseNarration(scenes[currentIdx].narration_normalized);
         }
       }
 
-      const currentScene = scenes[currentIdx];
-      const sceneProgress = Math.min(1.0, sceneElapsed / currentScene.duration_seconds);
+      const activeScene = scenes[currentIdx];
+      const activeElapsed = (performance.now() - sceneStartTimestamp) / 1000;
+      const sceneProgress = Math.min(1.0, activeElapsed / activeScene.duration_seconds);
 
-      // Transition check (last 0.8s)
+      // Transition check (last 0.8s, only when voiceover is done or nearly done)
       const transitionWindow = 0.8;
-      const timeLeftInScene = currentScene.duration_seconds - sceneElapsed;
+      const timeLeftInScene = activeScene.duration_seconds - activeElapsed;
       const isTransitioning =
-        currentIdx < scenes.length - 1 && timeLeftInScene < transitionWindow;
+        currentIdx < scenes.length - 1 &&
+        timeLeftInScene < transitionWindow &&
+        timeLeftInScene > 0 &&
+        !audioEngine.isCurrentlySpeaking();
       const transitionProgress = isTransitioning
         ? 1.0 - timeLeftInScene / transitionWindow
         : 0;
@@ -189,7 +211,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
 
       if (rendererRef.current) {
         rendererRef.current.render({
-          currentScene,
+          currentScene: activeScene,
           nextScene,
           sceneProgress,
           isTransitioning,
