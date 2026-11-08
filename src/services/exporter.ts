@@ -271,7 +271,7 @@ export async function exportVideo(
         isTransitioning,
         transitionProgress,
         showSubtitles: true,
-        showTitleCard: true,
+        showTitleCard: false,
       });
 
       if (sceneElapsed >= sceneDuration) {

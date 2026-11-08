@@ -45,7 +45,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
   const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
   const [activeSceneIdx, setActiveSceneIdx] = useState<number>(0);
   const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
-  const [showTitleCard, setShowTitleCard] = useState<boolean>(true);
+  const [showTitleCard, setShowTitleCard] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isDuckingActive, setIsDuckingActive] = useState<boolean>(false);
   const [currentMusicGain, setCurrentMusicGain] = useState<number>(0.25);
@@ -351,33 +351,6 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
           </button>
         )}
 
-        {/* Live Audio Ducking Meter Badge */}
-        <div className="absolute top-4 right-4 flex items-center gap-2 pointer-events-none">
-          <div
-            className={`flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-semibold backdrop-blur-md border transition-all ${
-              isDuckingActive
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-950/70 text-slate-300 border-slate-700/60'
-            }`}
-          >
-            <div className="flex items-center gap-1">
-              <Mic
-                className={`w-3.5 h-3.5 ${
-                  isDuckingActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'
-                }`}
-              />
-              <span>Voice: 100%</span>
-            </div>
-            <span className="text-slate-600">•</span>
-            <div className="flex items-center gap-1">
-              <Music className="w-3.5 h-3.5 text-cyan-400" />
-              <span>
-                BGM: {isDuckingActive ? '6% (Ducked)' : `${Math.round(currentMusicGain * 100)}%`}
-              </span>
-            </div>
-          </div>
-        </div>
-
         {/* Empty state overlay */}
         {scenes.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-950/90 backdrop-blur-sm">
@@ -491,9 +464,33 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
             <span className="text-slate-600">/</span>
             <span className="text-slate-400">{formatTime(totalDuration)}</span>
           </div>
+
+          {/* Audio Ducking Live Telemetry (in control bar, keeping video canvas clean) */}
+          <div
+            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-all ${
+              isDuckingActive
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-sm'
+                : 'bg-slate-900 text-slate-400 border-slate-800'
+            }`}
+            title="Trạng thái Audio Ducking: Giọng đọc 100%, Nhạc nền tự hạ khi có giọng nói"
+          >
+            <div className="flex items-center gap-1">
+              <Mic
+                className={`w-3 h-3 ${
+                  isDuckingActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'
+                }`}
+              />
+              <span>Voice: 100%</span>
+            </div>
+            <span className="text-slate-600">•</span>
+            <div className="flex items-center gap-1">
+              <Music className="w-3 h-3 text-cyan-400" />
+              <span>BGM: {isDuckingActive ? '6%' : `${Math.round(currentMusicGain * 100)}%`}</span>
+            </div>
+          </div>
         </div>
 
-        {/* Center: Overlays Toggle (Subtitles, Title card) */}
+        {/* Center: Overlays Toggle & Fullscreen */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowSubtitles(!showSubtitles)}
@@ -506,18 +503,6 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
           >
             <Subtitles className="w-3.5 h-3.5" />
             <span>Phụ Đề</span>
-          </button>
-
-          <button
-            onClick={() => setShowTitleCard(!showTitleCard)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition ${
-              showTitleCard
-                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                : 'bg-slate-800 text-slate-400 border-slate-700'
-            }`}
-            title="Bật/Tắt thẻ tiêu đề góc trên"
-          >
-            <span>Thẻ Cảnh</span>
           </button>
 
           <button

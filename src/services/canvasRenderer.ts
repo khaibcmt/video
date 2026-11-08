@@ -395,8 +395,8 @@ export class CanvasRenderer {
     this.drawFloatingParticles();
     this.drawCinematicVignette();
 
-    // Watermark / title card
-    if (state.showTitleCard !== false) {
+    // Watermark / title card (Disabled by default to keep video screen clean and cinematic)
+    if (state.showTitleCard === true) {
       this.drawTitleCard(state.currentScene);
     }
 
