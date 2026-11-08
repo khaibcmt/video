@@ -2,6 +2,8 @@ import { Scene, ExportProgress } from '../types';
 import { audioEngine } from './audioEngine';
 import { CanvasRenderer } from './canvasRenderer';
 
+export type VideoExportFormat = 'mp4' | 'webm';
+
 /**
  * Formats seconds into standard SubRip timestamp: HH:MM:SS,mmm
  */
@@ -59,12 +61,62 @@ export function exportSrtFile(scenes: Scene[], lessonTitle: string): void {
 }
 
 /**
- * Exports video as .webm by combining canvas.captureStream(30) and AudioContext stream
+ * Detects the best supported MIME type for MP4 or WebM
  */
-export async function exportWebMVideo(
+export function getSupportedVideoMimeType(format: VideoExportFormat): {
+  mimeType: string;
+  extension: string;
+  isNativeMp4: boolean;
+} {
+  if (format === 'mp4') {
+    const mp4Mimes = [
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4;codecs=avc1',
+      'video/mp4;codecs=h264,aac',
+      'video/mp4',
+    ];
+
+    for (const mime of mp4Mimes) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) {
+        return { mimeType: mime, extension: 'mp4', isNativeMp4: true };
+      }
+    }
+
+    // Fallback if browser doesn't natively support video/mp4 in MediaRecorder
+    return {
+      mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+        ? 'video/webm;codecs=vp9,opus'
+        : 'video/webm',
+      extension: 'mp4',
+      isNativeMp4: false,
+    };
+  }
+
+  // WebM format
+  const webmMimes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+
+  for (const mime of webmMimes) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) {
+      return { mimeType: mime, extension: 'webm', isNativeMp4: false };
+    }
+  }
+
+  return { mimeType: 'video/webm', extension: 'webm', isNativeMp4: false };
+}
+
+/**
+ * Exports video in MP4 or WebM format by combining canvas.captureStream(30) and AudioContext stream
+ */
+export async function exportVideo(
   canvas: HTMLCanvasElement,
   scenes: Scene[],
   lessonTitle: string,
+  format: VideoExportFormat = 'mp4',
   onProgress: (progress: ExportProgress) => void,
   onCancelRequested?: () => boolean
 ): Promise<void> {
@@ -87,17 +139,11 @@ export async function exportWebMVideo(
   const combinedStream = new MediaStream(tracks);
 
   // Supported MIME type detection
-  let mimeType = 'video/webm;codecs=vp9,opus';
-  if (!MediaRecorder.isTypeSupported(mimeType)) {
-    mimeType = 'video/webm;codecs=vp8,opus';
-  }
-  if (!MediaRecorder.isTypeSupported(mimeType)) {
-    mimeType = 'video/webm';
-  }
+  const { mimeType, extension } = getSupportedVideoMimeType(format);
 
   const recorder = new MediaRecorder(combinedStream, {
     mimeType,
-    videoBitsPerSecond: 3_500_000, // 3.5 Mbps for crisp 720p
+    videoBitsPerSecond: 4_000_000, // 4 Mbps for high-definition 720p
   });
 
   const chunks: Blob[] = [];
@@ -134,7 +180,7 @@ export async function exportWebMVideo(
           .trim()
           .replace(/\s+/g, '_');
 
-        const fileName = `${cleanName}_${timestamp}.webm`;
+        const fileName = `${cleanName}_${timestamp}.${extension}`;
 
         const a = document.createElement('a');
         a.href = downloadUrl;
@@ -143,7 +189,7 @@ export async function exportWebMVideo(
         a.click();
         document.body.removeChild(a);
 
-        setTimeout(() => URL.revokeObjectURL(downloadUrl), 5000);
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 8000);
 
         onProgress({
           isExporting: false,
@@ -151,7 +197,7 @@ export async function exportWebMVideo(
           currentSceneIndex: scenes.length - 1,
           totalScenes: scenes.length,
           timeRemainingSec: 0,
-          statusText: 'Xuất video thành công!',
+          statusText: `Xuất video ${extension.toUpperCase()} thành công!`,
         });
 
         resolve();
@@ -204,7 +250,7 @@ export async function exportWebMVideo(
         currentSceneIndex,
         totalScenes: scenes.length,
         timeRemainingSec: timeRemaining,
-        statusText: `Đang render phân cảnh ${currentSceneIndex + 1}/${scenes.length}: ${scene.title}`,
+        statusText: `Đang render phân cảnh ${currentSceneIndex + 1}/${scenes.length} [${format.toUpperCase()}]: ${scene.title}`,
       });
 
       // Transition check (last 0.8s)
@@ -247,4 +293,15 @@ export async function exportWebMVideo(
     audioEngine.playVietnameseNarration(scenes[0].narration_normalized);
     requestAnimationFrame(renderLoop);
   });
+}
+
+// Backward compatibility alias for WebM
+export async function exportWebMVideo(
+  canvas: HTMLCanvasElement,
+  scenes: Scene[],
+  lessonTitle: string,
+  onProgress: (progress: ExportProgress) => void,
+  onCancelRequested?: () => boolean
+): Promise<void> {
+  return exportVideo(canvas, scenes, lessonTitle, 'webm', onProgress, onCancelRequested);
 }

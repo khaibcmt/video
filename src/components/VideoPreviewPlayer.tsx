@@ -19,7 +19,7 @@ import {
 import { Scene, ExportProgress } from '../types';
 import { CanvasRenderer } from '../services/canvasRenderer';
 import { audioEngine } from '../services/audioEngine';
-import { exportWebMVideo, exportSrtFile } from '../services/exporter';
+import { exportVideo, exportSrtFile, VideoExportFormat } from '../services/exporter';
 
 interface VideoPreviewPlayerProps {
   scenes: Scene[];
@@ -280,7 +280,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
   };
 
   // Export handlers
-  const handleExportWebM = async () => {
+  const handleExport = async (format: VideoExportFormat = 'mp4') => {
     if (!canvasRef.current || scenes.length === 0) return;
     pausePlayback();
 
@@ -291,19 +291,20 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
       currentSceneIndex: 0,
       totalScenes: scenes.length,
       timeRemainingSec: totalDuration,
-      statusText: 'Đang chuẩn bị luồng ghi hình...',
+      statusText: `Đang chuẩn bị luồng ghi hình định dạng ${format.toUpperCase()}...`,
     });
 
     try {
-      await exportWebMVideo(
+      await exportVideo(
         canvasRef.current,
         scenes,
         lessonTitle,
+        format,
         (prog) => setExportProgress({ ...prog }),
         () => cancelExportRef.current
       );
     } catch (err: any) {
-      console.error('Export WebM Error:', err);
+      console.error(`Export ${format.toUpperCase()} Error:`, err);
     } finally {
       setTimeout(() => setExportProgress(null), 2500);
     }
@@ -399,7 +400,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
               <Sparkles className="w-8 h-8" />
             </div>
             <h3 className="text-lg font-bold text-white mb-1">
-              Đang Xuất Video WebM Chuẩn Điện Ảnh (1280x720)
+              Đang Render & Xuất Video Chuẩn Điện Ảnh (1280x720)
             </h3>
             <p className="text-xs text-slate-400 max-w-md mb-4">
               {exportProgress.statusText}
@@ -529,27 +530,38 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
         </div>
 
         {/* Right: Export & New Video Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center flex-wrap gap-2">
           {/* Nút Xuất Phụ Đề (.srt) */}
           <button
             onClick={handleExportSrt}
             disabled={scenes.length === 0}
-            className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 hover:text-white flex items-center gap-1.5 transition disabled:opacity-40"
-            title="Tải tệp phụ đề SubRip .srt"
+            className="px-3 py-2 rounded-xl bg-slate-850 hover:bg-slate-800 border border-slate-750 text-xs font-semibold text-slate-200 hover:text-white flex items-center gap-1.5 transition disabled:opacity-40"
+            title="Tải tệp phụ đề SubRip .srt chuẩn mốc thời gian"
           >
             <FileText className="w-3.5 h-3.5 text-cyan-400" />
-            <span>📄 Tải Phụ Đề (.srt)</span>
+            <span>📄 Phụ Đề (.srt)</span>
           </button>
 
           {/* Nút Xuất Video (.webm) */}
           <button
-            onClick={handleExportWebM}
+            onClick={() => handleExport('webm')}
             disabled={scenes.length === 0 || exportProgress?.isExporting}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition transform active:scale-95 disabled:opacity-40"
-            title="Gộp Canvas stream + Web Audio stream xuất video .webm"
+            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-100 flex items-center gap-1.5 transition disabled:opacity-40"
+            title="Xuất file video chuẩn WebM"
           >
-            <Download className="w-4 h-4" />
-            <span>🎬 Xuất Video (.webm)</span>
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span>🎬 WebM (.webm)</span>
+          </button>
+
+          {/* Nút Xuất Video (.mp4) - Nút chính */}
+          <button
+            onClick={() => handleExport('mp4')}
+            disabled={scenes.length === 0 || exportProgress?.isExporting}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-lg shadow-amber-500/25 transition transform active:scale-95 disabled:opacity-40"
+            title="Gộp Canvas stream + Web Audio stream xuất video MP4 tương thích mọi thiết bị"
+          >
+            <Download className="w-4 h-4 stroke-[2.5]" />
+            <span>🎬 Xuất Video (.mp4)</span>
           </button>
         </div>
       </div>
