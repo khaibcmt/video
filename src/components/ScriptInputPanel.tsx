@@ -1,12 +1,9 @@
 import React, { useRef } from 'react';
 import {
   RotateCcw,
-  BookOpen,
   Clock,
   Loader2,
   Wand2,
-  CheckCircle2,
-  Video,
   GraduationCap,
   Rocket,
   Sliders,
@@ -41,38 +38,6 @@ const DIRECTOR_DURATION_OPTIONS = [
   { label: '3 Phút (~7-8 cảnh)', value: 180 },
 ];
 
-const SAMPLE_TOPICS: {
-  name: string;
-  subject: SubjectOption;
-  title: string;
-  content: string;
-}[] = [
-  {
-    name: 'Bài 9: Thủy sản',
-    subject: 'Công nghệ',
-    title: 'Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến',
-    content: `Việt Nam có đường bờ biển dài 3.260 km và diện tích mặt nước nội địa rộng lớn, tạo điều kiện cho các nhóm thủy sản bản địa và nhập nội phát triển mạnh. Theo tính chất sinh thái, thủy sản được chia thành nhóm nước ngọt như cá tra, cá rô phi, nhóm nước lợ như tôm thẻ chân trắng, cá chẽm và nhóm nước mặn như cá song, tôm hùm. Trong nuôi trồng hiện đại, phương thức nuôi thâm canh ứng dụng quạt nước tạo oxy trên 5 mg/l kết hợp nuôi tuần hoàn RAS và lồng bè công nghệ cao giúp nâng cao năng suất bền vững.`,
-  },
-  {
-    name: 'Quang hợp thực vật',
-    subject: 'Sinh học',
-    title: 'Bài 4: Quang hợp ở thực vật và chu trình trao đổi chất',
-    content: `Quang hợp ở thực vật là quá trình lục lạp hấp thụ năng lượng ánh sáng mặt trời để tổng hợp chất hữu cơ từ khí cacbonic và nước, đồng thời giải phóng dưỡng khí oxy. Tại màng thylakoid, pha sáng diễn ra quá trình quang phân li nước tạo năng lượng ATP và NADPH. Tiếp đó, chu trình Calvin cố định CO2 ở chất nền lục lạp, quyết định trên 90% sinh khối cây trồng trong nông nghiệp công nghệ cao.`,
-  },
-  {
-    name: 'Cảm ứng điện từ',
-    subject: 'Vật lý',
-    title: 'Bài 12: Hiện tượng cảm ứng điện từ và máy phát điện xoay chiều',
-    content: `Hiện tượng cảm ứng điện từ xuất hiện khi từ thông qua mạch kín biến thiên theo định luật Faraday, sinh ra dòng điện cảm ứng. Nguyên lý này được ứng dụng trực tiếp trong các tua-bin máy phát điện xoay chiều 3 pha có tần số 50 Hz tại nhà máy thủy điện và điện gió, truyền tải qua lưới điện cao áp 500 kV phục vụ sản xuất công nghiệp.`,
-  },
-  {
-    name: 'Phản ứng Oxi hóa - Khử',
-    subject: 'Hóa học',
-    title: 'Bài 15: Phản ứng oxi hóa khử và ứng dụng điện phân',
-    content: `Phản ứng oxi hóa khử là quá trình chuyển dịch electron giữa chất khử và chất oxi hóa diễn ra phổ biến trong tự nhiên và công nghiệp hóa chất. Trong phòng thí nghiệm, sự nhường và nhận electron thể hiện rõ qua phản ứng giữa kim loại với dung dịch axit hoặc quá trình điện phân dung dịch muối đồng sunfat để tinh luyện đồng nguyên chất đạt độ tinh khiết 99,9%.`,
-  },
-];
-
 export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
   lessonTitle,
   onLessonTitleChange,
@@ -91,12 +56,6 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
 
   const wordCount = scriptText.trim() ? scriptText.trim().split(/\s+/).length : 0;
   const canGenerate = Boolean(lessonTitle.trim() || scriptText.trim());
-
-  const handleApplyTopic = (sample: (typeof SAMPLE_TOPICS)[0]) => {
-    onLessonTitleChange(sample.title);
-    onSubjectChange(sample.subject);
-    onScriptTextChange(sample.content);
-  };
 
   const handleReset = () => {
     onResetVideo();
@@ -136,7 +95,7 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
         </button>
       </div>
 
-      {/* YÊU CẦU 1: GIAO DIỆN NHẬP LIỆU 1-CHẠM (QUICK DIRECTOR BAR) */}
+      {/* GIAO DIỆN NHẬP LIỆU 1-CHẠM (QUICK DIRECTOR BAR) */}
       <div className="p-4 rounded-xl bg-slate-950/85 border border-amber-500/30 space-y-3.5 shadow-inner">
         {/* Ô nhập: Tên bài học / Chủ đề */}
         <div>
@@ -144,9 +103,9 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
             htmlFor="director-topic-input"
             className="block text-xs font-bold text-amber-300 mb-1.5 flex items-center justify-between"
           >
-            <span>1. Tên bài học / Chủ đề bài giảng:</span>
+            <span>1. Tên bài học / Chủ đề:</span>
             <span className="text-[10px] font-normal text-slate-400">
-              Chỉ cần nhập tên bài là AI tự sinh kịch bản 4 phần
+              Nhập chủ đề mới để tạo kịch bản & dựng video
             </span>
           </label>
           <input
@@ -155,7 +114,7 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
             type="text"
             value={lessonTitle}
             onChange={(e) => onLessonTitleChange(e.target.value)}
-            placeholder="Ví dụ: Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến"
+            placeholder="Nhập tên bài học hoặc chủ đề..."
             className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition"
           />
         </div>
@@ -200,7 +159,7 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
               value={
                 DIRECTOR_DURATION_OPTIONS.some((o) => o.value === targetDurationSec)
                   ? targetDurationSec
-                  : 120
+                  : 60
               }
               onChange={(e) => onTargetDurationChange(Number(e.target.value))}
               aria-label="Thời lượng"
@@ -256,63 +215,20 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
         </div>
       </div>
 
-      {/* Bài học mẫu 1-chạm theo từng môn */}
-      <div>
-        <div className="flex items-center gap-1.5 mb-2">
-          <BookOpen className="w-3.5 h-3.5 text-amber-400/80" />
-          <span className="text-xs font-medium text-slate-400">
-            Chọn nhanh bài học mẫu chuẩn sư phạm:
-          </span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {SAMPLE_TOPICS.map((item) => (
-            <button
-              key={item.name}
-              type="button"
-              onClick={() => handleApplyTopic(item)}
-              className="text-left p-2 rounded-xl bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/40 transition group"
-            >
-              <span className="text-[10px] text-amber-400 font-bold block uppercase tracking-wider">
-                {item.subject}
-              </span>
-              <span className="text-xs font-semibold text-slate-200 group-hover:text-amber-200 truncate block">
-                {item.name}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Khung ghi chú / kịch bản chi tiết (Tùy chọn) */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>Ghi chú chỉ dẫn hoặc nội dung kịch bản bổ sung (Tùy chọn):</span>
+          <span>Nội dung kịch bản hoặc chỉ dẫn chi tiết (Tùy chọn):</span>
           <span className="text-amber-400 font-semibold">{wordCount} từ</span>
         </div>
 
         <textarea
           value={scriptText}
           onChange={(e) => onScriptTextChange(e.target.value)}
-          placeholder="Có thể để trống (AI sẽ tự biên soạn từ Tên bài học & Môn học ở trên) hoặc dán nội dung bài giảng chi tiết vào đây..."
+          placeholder="Nhập nội dung kịch bản hoặc để trống để AI tự biên soạn từ Tên bài học ở trên..."
           rows={3}
           className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs leading-relaxed text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition resize-y font-sans"
         />
-      </div>
-
-      {/* Cam kết kỹ thuật Zero-Bug Video Engine */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-        <div className="flex items-start gap-1.5 p-2 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-emerald-300">
-          <Video className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-          <span>
-            <strong>Ưu tiên 1 & 2 (Zero-Black-Screen):</strong> Nạp video MP4 CORS-safe; tự động fallback ảnh HD 16:9 Ken Burns sau 5s nếu mạng chậm.
-          </span>
-        </div>
-        <div className="flex items-start gap-1.5 p-2 rounded-lg bg-cyan-950/20 border border-cyan-500/20 text-cyan-300">
-          <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
-          <span>
-            <strong>Chuẩn hóa số đọc tiếng Việt:</strong> Tự chuyển "3.260 km" → "ba nghìn hai trăm sáu mươi ki-lô-mét".
-          </span>
-        </div>
       </div>
     </div>
   );

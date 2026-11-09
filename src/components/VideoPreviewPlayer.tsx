@@ -98,14 +98,28 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
 
   // Render the active scene's live video stream onto the 16:9 Canvas at a gentle interval when timeline is paused
   useEffect(() => {
-    if (isPlaying || scenes.length === 0) return;
+    if (scenes.length === 0) {
+      setIsPlaying(false);
+      setCurrentTimeSec(0);
+      setActiveSceneIdx(0);
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#05070d';
+          ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+      }
+      return;
+    }
+
+    if (isPlaying) return;
 
     setActiveSceneIdx(selectedSceneIndex);
     renderCurrentStaticFrame(selectedSceneIndex, 0.2);
 
     const startPreviewTime = performance.now();
     const intervalId = window.setInterval(() => {
-      const elapsed = (performance.now() - startPreviewTime) / 1000;
+      const elapsed = (performance.now() - startTimeOrZero(startPreviewTime)) / 1000;
       const scene = scenes[selectedSceneIndex] || scenes[0];
       const progressRatio =
         (elapsed % (scene.duration_seconds || 8)) / (scene.duration_seconds || 8);
@@ -116,6 +130,10 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
       window.clearInterval(intervalId);
     };
   }, [scenes, selectedSceneIndex, isPlaying, renderCurrentStaticFrame]);
+
+  function startTimeOrZero(t: number) {
+    return t || 0;
+  }
 
   // Main playback loop
   const startPlayback = async (fromSeconds: number = currentTimeSec) => {

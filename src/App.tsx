@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Header } from './components/Header';
 import { ScriptInputPanel } from './components/ScriptInputPanel';
 import { VideoPreviewPlayer } from './components/VideoPreviewPlayer';
@@ -10,27 +10,19 @@ import {
   scaleScenesToTargetDuration,
 } from './services/scriptAnalyzer';
 import { fetchVerifiedSceneMedia } from './services/mediaLoader';
-import { PRESET_SAMPLE_SCENES } from './services/sampleData';
 import { audioEngine } from './services/audioEngine';
-
-// Default initial scenes: Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến (5 pedagogical scenes)
-const INITIAL_SCENES: Scene[] = PRESET_SAMPLE_SCENES.bai_9_thuy_san;
 
 export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.8-flash');
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>('medium');
   const [isKeyManagerOpen, setIsKeyManagerOpen] = useState<boolean>(false);
 
-  // Autonomous AI Director Mode state
-  const [lessonTitle, setLessonTitle] = useState<string>(
-    'Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến'
-  );
-  const [subject, setSubject] = useState<SubjectOption>('Công nghệ');
-  const [scriptText, setScriptText] = useState<string>(
-    `Việt Nam có đường bờ biển dài 3.260 km và diện tích mặt nước nội địa rộng lớn, tạo điều kiện cho các nhóm thủy sản bản địa và nhập nội phát triển mạnh. Theo tính chất sinh thái, thủy sản được chia thành nhóm nước ngọt như cá tra, cá rô phi, nhóm nước lợ như tôm thẻ chân trắng, cá chẽm và nhóm nước mặn như cá song, tôm hùm. Trong nuôi trồng hiện đại, phương thức nuôi thâm canh ứng dụng quạt nước tạo oxy trên 5 mg/l kết hợp nuôi tuần hoàn RAS và lồng bè công nghệ cao giúp nâng cao năng suất bền vững.`
-  );
-  const [targetDurationSec, setTargetDurationSec] = useState<number>(120);
-  const [scenes, setScenes] = useState<Scene[]>(INITIAL_SCENES);
+  // Clean, blank initial state ("trang mới tinh")
+  const [lessonTitle, setLessonTitle] = useState<string>('');
+  const [subject, setSubject] = useState<SubjectOption>('Sinh học');
+  const [scriptText, setScriptText] = useState<string>('');
+  const [targetDurationSec, setTargetDurationSec] = useState<number>(60);
+  const [scenes, setScenes] = useState<Scene[]>([]);
   const [selectedSceneIndex, setSelectedSceneIndex] = useState<number>(0);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
@@ -78,11 +70,6 @@ export default function App() {
       })
     );
   }, []);
-
-  // Preload initial scenes media on mount
-  useEffect(() => {
-    loadMediaForScenes(INITIAL_SCENES);
-  }, [loadMediaForScenes]);
 
   // Handle Autonomous AI Director 1-Click Script & Video Generation
   const handleAnalyzeScript = async () => {

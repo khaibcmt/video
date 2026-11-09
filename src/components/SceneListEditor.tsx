@@ -214,6 +214,17 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
 
       {/* Scene Cards List */}
       <div className="flex flex-col gap-3 max-h-[680px] overflow-y-auto pr-1">
+        {scenes.length === 0 && (
+          <div className="py-10 px-4 rounded-xl border border-dashed border-slate-800 bg-slate-950/40 text-center flex flex-col items-center justify-center gap-2">
+            <Film className="w-6 h-6 text-slate-600" />
+            <p className="text-xs font-semibold text-slate-400">
+              Danh sách phân cảnh đang trống
+            </p>
+            <p className="text-[11px] text-slate-500 max-w-xs">
+              Nhập tên bài học ở khung trên và nhấn "🚀 TỰ ĐỘNG TẠO KỊCH BẢN & DỰNG VIDEO CHUYỂN ĐỘNG" hoặc bấm "+ Thêm Cảnh" để bắt đầu mới.
+            </p>
+          </div>
+        )}
         {scenes.map((scene, idx) => {
           const isSelected = idx === selectedSceneIndex;
           const isSwitching = switchingSceneIdx === idx;
