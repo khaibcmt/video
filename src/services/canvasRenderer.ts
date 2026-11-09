@@ -1,6 +1,6 @@
 import { CameraMotion, LutStyle, Scene, VisualBeat } from '../types';
-import { generateProceduralBackground } from './mediaLoader';
 import { audioEngine } from './audioEngine';
+import { selfHealingVisualEngine } from './selfHealingVisualEngine';
 
 export interface RenderState {
   currentScene: Scene;
@@ -77,9 +77,15 @@ export class CanvasRenderer {
   }
 
   /**
-   * Draws a single media source (Beat or Scene video/image) with Ken Burns motion
+   * 4-STAGE SELF-HEALING VISUAL RENDERER (`drawMediaSource`):
+   * - Stage 4 Watchdog monitors `<video>` on every frame (30fps): if video stalls, ends early, or has videoWidth === 0,
+   *   automatically loops or smoothly cross-fades (300ms) into Stage 2 (AI 2.5D Physics) or Stage 3 (VTV7 Motion Graphics).
+   * - Stage 2: Renders 1280x720 AI Scene with 3D Ken Burns + 2.5D Parallax + Subject-Specific Physics Particles.
+   * - Stage 3: Renders VTV7-Style Procedural Motion Graphics (Animated Mindmap/Flowchart + Radar Scanner + Kinetic Typography).
    */
   private drawMediaSource(
+    scene: Scene,
+    activeBeat: VisualBeat | undefined,
     videoEl: HTMLVideoElement | null | undefined,
     videoLoaded: boolean | undefined,
     imageEl: HTMLImageElement | null | undefined,
@@ -93,18 +99,73 @@ export class CanvasRenderer {
   ): void {
     const { width, height } = this.canvas;
     const ctx = this.ctx;
+    const frameTimeSec = performance.now() / 1000;
+    const effectiveMode = activeBeat?.visualMode || scene.visualMode || 'auto';
+    const watchdogKey = `sc_${sceneId}_b_${activeBeat?.beat_id || 0}`;
+
+    // BƯỚC 4: Zero-Black-Frame Watchdog evaluation
+    const watchdog = selfHealingVisualEngine.evaluateWatchdog(
+      watchdogKey,
+      videoEl,
+      videoLoaded,
+      effectiveMode
+    );
 
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
     ctx.filter = this.getFilterString(lutStyle);
 
-    if (videoEl && videoLoaded && videoEl.readyState >= 2) {
-      videoEl.loop = true;
-      videoEl.muted = true;
-      if (videoEl.ended || videoEl.paused) {
-        videoEl.play().catch(() => {});
+    // Helper to draw Stage 2 (AI Scene + 2.5D Physics) or Stage 3 (VTV7 Motion Graphics)
+    const drawStage2OrStage3 = (stageAlpha: number) => {
+      if (stageAlpha <= 0.01) return;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha * stageAlpha));
+
+      const hasValidImage = Boolean(
+        effectiveMode !== 'vtv7-graphics' &&
+          imageEl &&
+          imageLoaded &&
+          imageEl.complete &&
+          imageEl.naturalWidth > 0
+      );
+
+      if (hasValidImage && imageEl) {
+        // BƯỚC 2: AI Scene HD 1280x720 + 3D Camera Parallax + Subject-Specific Physics Overlay
+        selfHealingVisualEngine.render25DParallaxScene(
+          ctx,
+          width,
+          height,
+          imageEl,
+          motion,
+          localProgress,
+          frameTimeSec
+        );
+        selfHealingVisualEngine.renderProceduralEnvironmentParticles(
+          ctx,
+          width,
+          height,
+          scene.subject || 'Sinh học',
+          frameTimeSec,
+          fallbackText
+        );
+      } else {
+        // BƯỚC 3: VTV7 Procedural Motion Graphics Engine (Mindmap/Flowchart + Radar + Kinetic Typography)
+        ctx.filter = 'none';
+        selfHealingVisualEngine.renderProceduralMotionGraphics(
+          ctx,
+          width,
+          height,
+          scene,
+          activeBeat,
+          frameTimeSec,
+          localProgress
+        );
       }
 
+      ctx.restore();
+    };
+
+    if (watchdog.useVideo && videoEl) {
       let scale = 1.0;
       let offsetX = 0;
       switch (motion) {
@@ -124,67 +185,31 @@ export class CanvasRenderer {
           break;
       }
 
+      ctx.save();
       if (scale !== 1.0 || offsetX !== 0) {
         ctx.translate(width / 2 + offsetX, height / 2);
         ctx.scale(scale, scale);
         ctx.translate(-width / 2, -height / 2);
       }
-
       ctx.drawImage(videoEl, 0, 0, width, height);
-    } else if (
-      imageEl &&
-      imageLoaded &&
-      imageEl.complete &&
-      imageEl.naturalWidth > 0
-    ) {
-      let scale = 1.0;
-      let offsetX = 0;
-      switch (motion) {
-        case 'zoom-in':
-          scale = 1.0 + 0.15 * localProgress;
-          break;
-        case 'zoom-out':
-          scale = 1.15 - 0.15 * localProgress;
-          break;
-        case 'pan-left':
-          scale = 1.12;
-          offsetX = 45 - 90 * localProgress;
-          break;
-        case 'pan-right':
-          scale = 1.12;
-          offsetX = -45 + 90 * localProgress;
-          break;
-      }
+      ctx.restore();
 
-      ctx.translate(width / 2 + offsetX, height / 2);
-      ctx.scale(scale, scale);
-      ctx.translate(-width / 2, -height / 2);
-
-      const imgRatio = imageEl.naturalWidth / imageEl.naturalHeight;
-      const canvasRatio = width / height;
-      let drawW = width;
-      let drawH = height;
-      let drawX = 0;
-      let drawY = 0;
-
-      if (imgRatio > canvasRatio) {
-        drawH = height;
-        drawW = height * imgRatio;
-        drawX = (width - drawW) / 2;
-      } else {
-        drawW = width;
-        drawH = width / imgRatio;
-        drawY = (height - drawH) / 2;
-      }
-
-      ctx.drawImage(imageEl, drawX, drawY, drawW, drawH);
-    } else {
-      const animatedFallback = generateProceduralBackground(
-        lutStyle,
-        sceneId,
+      // Overlay subtle subject physics particles on video for extra pedagogical depth
+      selfHealingVisualEngine.renderProceduralEnvironmentParticles(
+        ctx,
+        width,
+        height,
+        scene.subject || 'Sinh học',
+        frameTimeSec,
         fallbackText
       );
-      ctx.drawImage(animatedFallback, 0, 0, width, height);
+
+      // If Watchdog is mid-crossfade (300ms transition due to video stall), blend Stage 2/3 smoothly on top
+      if (watchdog.fallbackBlendAlpha > 0.01) {
+        drawStage2OrStage3(watchdog.fallbackBlendAlpha);
+      }
+    } else {
+      drawStage2OrStage3(1.0);
     }
 
     ctx.restore();
@@ -256,6 +281,8 @@ export class CanvasRenderer {
 
     if (prevBeat && activeBeat && beatBlendAlpha < 1) {
       this.drawMediaSource(
+        scene,
+        prevBeat,
         prevBeat.videoElement || scene.videoElement,
         prevBeat.videoLoaded ?? scene.videoLoaded,
         prevBeat.imageElement || scene.imageElement,
@@ -268,6 +295,8 @@ export class CanvasRenderer {
         alpha
       );
       this.drawMediaSource(
+        scene,
+        activeBeat,
         activeBeat.videoElement || scene.videoElement,
         activeBeat.videoLoaded ?? scene.videoLoaded,
         activeBeat.imageElement || scene.imageElement,
@@ -282,8 +311,10 @@ export class CanvasRenderer {
       return;
     }
 
-    if (activeBeat && (activeBeat.videoElement || activeBeat.imageElement)) {
+    if (activeBeat) {
       this.drawMediaSource(
+        scene,
+        activeBeat,
         activeBeat.videoElement || scene.videoElement,
         activeBeat.videoLoaded ?? scene.videoLoaded,
         activeBeat.imageElement || scene.imageElement,
@@ -299,6 +330,8 @@ export class CanvasRenderer {
     }
 
     this.drawMediaSource(
+      scene,
+      undefined,
       scene.videoElement,
       scene.videoLoaded,
       scene.imageElement,

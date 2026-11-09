@@ -1,4 +1,11 @@
-import { LutStyle, Scene, VisualBeat } from '../types';
+import {
+  LutStyle,
+  Scene,
+  SceneVisualMode,
+  SubjectOption,
+  VisualBeat,
+  VisualFallbackStage,
+} from '../types';
 import {
   translateNarrationToVideoQueries,
   scoreVideoCandidateForQuery,
@@ -6,6 +13,7 @@ import {
   RawVideoSearchItem,
 } from './videoQueryTranslator';
 import { keyRotationEngine } from './keyRotation';
+import { selfHealingVisualEngine } from './selfHealingVisualEngine';
 
 const videoCache = new Map<string, HTMLVideoElement>();
 const imageCache = new Map<string, HTMLImageElement>();
@@ -595,9 +603,16 @@ function drawAnimatedCategoryFrame(
 export async function createSynthesizedMotionVideo(
   category: string,
   sceneId: number = 1,
-  variantIndex: number = 0
+  variantIndex: number = 0,
+  options?: {
+    stage?: VisualFallbackStage;
+    imageElement?: HTMLImageElement;
+    sceneContext?: Partial<Scene>;
+  }
 ): Promise<{ videoUrl: string; videoElement: HTMLVideoElement }> {
-  const cacheKey = `stream://${category}_${sceneId}_${variantIndex}`;
+  const stage = options?.stage || 3;
+  const hasImg = Boolean(options?.imageElement);
+  const cacheKey = `stream://${category}_${sceneId}_${variantIndex}_s${stage}_${hasImg ? 'img' : 'proc'}`;
   if (videoCache.has(cacheKey)) {
     return { videoUrl: cacheKey, videoElement: videoCache.get(cacheKey)! };
   }
@@ -608,11 +623,69 @@ export async function createSynthesizedMotionVideo(
   const ctx = canvas.getContext('2d')!;
 
   const startTime = performance.now();
-  drawAnimatedCategoryFrame(ctx, canvas.width, canvas.height, category, 0, variantIndex);
+  const mockScene: Scene = {
+    scene_id: sceneId,
+    title: options?.sceneContext?.title || `Phân cảnh ${sceneId}`,
+    subject: options?.sceneContext?.subject || 'Sinh học',
+    pedagogical_section:
+      options?.sceneContext?.pedagogical_section || 'Kiến thức trọng tâm',
+    narration_vi:
+      options?.sceneContext?.narration_vi ||
+      options?.sceneContext?.title ||
+      'Nội dung bài giảng sư phạm',
+    narration_normalized:
+      options?.sceneContext?.narration_normalized || '',
+    search_keywords_en: category,
+    pedagogical_badge:
+      options?.sceneContext?.pedagogical_badge || 'Kiến thức trọng tâm',
+    camera_motion: options?.sceneContext?.camera_motion || 'zoom-in',
+    lut_style: options?.sceneContext?.lut_style || 'cinematic-teal-orange',
+    duration_seconds: 10,
+  };
+
+  const drawPreviewTick = (elapsedSec: number) => {
+    const localProgress = (elapsedSec % 8) / 8;
+    if (stage === 2 && options?.imageElement) {
+      selfHealingVisualEngine.render25DParallaxScene(
+        ctx,
+        canvas.width,
+        canvas.height,
+        options.imageElement,
+        mockScene.camera_motion,
+        localProgress,
+        elapsedSec
+      );
+      selfHealingVisualEngine.renderProceduralEnvironmentParticles(
+        ctx,
+        canvas.width,
+        canvas.height,
+        mockScene.subject || 'Sinh học',
+        elapsedSec,
+        mockScene.narration_vi
+      );
+    } else if (stage === 3) {
+      ctx.save();
+      ctx.scale(0.5, 0.5);
+      selfHealingVisualEngine.renderProceduralMotionGraphics(
+        ctx,
+        1280,
+        720,
+        mockScene,
+        undefined,
+        elapsedSec,
+        localProgress
+      );
+      ctx.restore();
+    } else {
+      drawAnimatedCategoryFrame(ctx, canvas.width, canvas.height, category, elapsedSec, variantIndex);
+    }
+  };
+
+  drawPreviewTick(0);
 
   window.setInterval(() => {
     const elapsed = (performance.now() - startTime) / 1000;
-    drawAnimatedCategoryFrame(ctx, canvas.width, canvas.height, category, elapsed, variantIndex);
+    drawPreviewTick(elapsed);
   }, 100);
 
   const stream = canvas.captureStream(15);
@@ -629,19 +702,31 @@ export async function createSynthesizedMotionVideo(
 }
 
 /**
- * STRICT MEDIA LOADER PIPELINE (Zero-Bug Video & Ken Burns HD Image Fallback):
- * - Ưu tiên 1: Tải video clip MP4/WebM chuyển động thật theo chủ thể (`crossOrigin = "anonymous"`, giới hạn 5 giây).
- * - Ưu tiên 2: Nếu video tải chậm quá 5 giây hoặc lỗi CORS/404, TỰ ĐỘNG chuyển sang nạp ảnh HD 16:9 chất lượng cao
- *   kèm hiệu ứng lia máy điện ảnh Ken Burns Pan/Zoom và luồng video dự phòng để KHÔNG BAO GIỜ bị màn hình đen!
+ * 4-STAGE SELF-HEALING VISUAL FALLBACK ENGINE (`fetchVerifiedSceneMedia`):
+ * - BƯỚC 1: Truy vấn lùi đa cấp (Multi-Query Relaxation) từ chi tiết đến tổng quát,
+ *           mỗi link MP4 giới hạn 2.5 giây qua AbortController, tổng thời gian Bước 1 tối đa 3.5 giây.
+ * - BƯỚC 2: Nếu Bước 1 không có video khớp chủ đề hoặc quá 3.5 giây (hoặc ở Chế độ Tự chủ AI 2.5D),
+ *           tự động nạp Ảnh AI HD 1280x720 từ `ai_visual_prompt` (Pollinations Flux / Documentary HD)
+ *           + Lớp Camera 3D Parallax + Lớp Môi trường Vật lý theo môn học (Bọt khí O2/Tia sáng nước hoặc Mạng phân tử/Đường sức).
+ * - BƯỚC 3: Nếu sau 5 giây cả Video lẫn Ảnh AI đều không tải được (mất mạng/quá tải) hoặc chọn chế độ Sơ đồ VTV7,
+ *           tự động kích hoạt Đồ họa Chuyển động Sư phạm Nội sinh (`renderProceduralMotionGraphics` chuẩn VTV7).
  */
 export async function fetchVerifiedSceneMedia(
   keywordsEn: string,
   narrationVi?: string,
   usedUrls?: Set<string>,
-  _visualPromptEn?: string,
+  visualPromptEn?: string,
   wikipediaTopicEn?: string,
   sceneId: number = 1,
-  preferredCandidateIndex: number = 0
+  preferredCandidateIndex: number = 0,
+  options?: {
+    forcedMode?: SceneVisualMode;
+    subject?: SubjectOption;
+    pedagogicalBadge?: string;
+    pedagogicalSection?: string;
+    title?: string;
+    rankedQueries?: string[];
+  }
 ): Promise<{
   videoUrl: string;
   videoElement: HTMLVideoElement;
@@ -651,10 +736,20 @@ export async function fetchVerifiedSceneMedia(
   imageUrl?: string;
   imageElement?: HTMLImageElement;
   imageLoaded?: boolean;
-  sourceType: 'video' | 'wikipedia' | 'wikimedia';
+  fallbackStage: VisualFallbackStage;
+  visualMode: SceneVisualMode;
+  sourceType: 'video' | 'ai' | 'wikipedia' | 'wikimedia' | 'procedural';
 }> {
   const pipelineStartMs = performance.now();
-  const MAX_VIDEO_LOAD_BUDGET_MS = 5000; // Strict 5-second budget for Priority 1 video loading
+  const STAGE1_MAX_BUDGET_MS = 3500; // Strict 3.5-second max budget for Stage 1 Video Query
+  const PER_VIDEO_ABORT_TIMEOUT_MS = 2500; // Strict 2.5-second AbortController timeout per video link
+
+  const forcedMode: SceneVisualMode =
+    options?.forcedMode ||
+    (selfHealingVisualEngine.getEngineMode() === 'ai-25d-autonomous'
+      ? 'ai-25d'
+      : 'auto');
+  const subject: SubjectOption = options?.subject || 'Sinh học';
 
   const translation = translateNarrationToVideoQueries(
     narrationVi || '',
@@ -662,126 +757,224 @@ export async function fetchVerifiedSceneMedia(
     wikipediaTopicEn
   );
 
-  const [externalVideoUrls, wikimediaUrls] = await Promise.all([
-    searchPexelsOrPixabayVideos([keywordsEn, translation.primaryQueryEn], usedUrls),
-    searchWikimediaVideoPool(translation.primaryQueryEn, narrationVi, usedUrls),
-  ]);
+  // Build ranked queries (3 tiers from most specific to general)
+  const rankedQueries = (
+    options?.rankedQueries && options.rankedQueries.length > 0
+      ? options.rankedQueries
+      : [
+          keywordsEn,
+          translation.primaryQueryEn,
+          ...(translation.fallbackQueriesEn || []),
+        ]
+  )
+    .filter(Boolean)
+    .slice(0, 3);
 
   const allCandidateUrls: string[] = [];
-  for (const u of [
-    ...externalVideoUrls,
-    ...wikimediaUrls,
-    ...translation.curatedVideoUrls,
-  ]) {
-    if (u && !allCandidateUrls.includes(u)) {
-      allCandidateUrls.push(u);
+
+  // ============================================================================
+  // BƯỚC 1: TRUY VẤN LÙI ĐA CẤP & CẮT TIMEOUT NHANH (TỐI ĐA 3.5 GIÂY)
+  // ============================================================================
+  if (forcedMode === 'auto' || forcedMode === 'video') {
+    try {
+      const searchRace = Promise.all([
+        searchPexelsOrPixabayVideos(rankedQueries, usedUrls),
+        searchWikimediaVideoPool(rankedQueries[0] || translation.primaryQueryEn, narrationVi, usedUrls),
+      ]);
+      const timeoutSearch = new Promise<[string[], string[]]>((resolve) =>
+        setTimeout(() => resolve([[], []]), 2200)
+      );
+
+      const [externalVideoUrls, wikimediaUrls] = await Promise.race([
+        searchRace,
+        timeoutSearch,
+      ]);
+
+      for (const u of [
+        ...externalVideoUrls,
+        ...wikimediaUrls,
+        ...translation.curatedVideoUrls,
+      ]) {
+        if (u && !allCandidateUrls.includes(u)) {
+          allCandidateUrls.push(u);
+        }
+      }
+    } catch {
+      // Fall through to Stage 2
+    }
+
+    const totalCandidates = allCandidateUrls.length;
+    const startIndex =
+      totalCandidates > 0 ? preferredCandidateIndex % totalCandidates : 0;
+
+    for (let offset = 0; offset < totalCandidates; offset++) {
+      const elapsedMs = performance.now() - pipelineStartMs;
+      const remainingStage1Ms = STAGE1_MAX_BUDGET_MS - elapsedMs;
+      if (remainingStage1Ms <= 250) {
+        // Exceeded 3.5s budget -> immediately switch to Stage 2 (AI Scene + 2.5D Physics)!
+        break;
+      }
+
+      const idx = (startIndex + offset) % totalCandidates;
+      const candidateUrl = allCandidateUrls[idx];
+
+      if (
+        preferredCandidateIndex === 0 &&
+        offset === 0 &&
+        usedUrls &&
+        usedUrls.has(candidateUrl) &&
+        totalCandidates > 1
+      ) {
+        continue;
+      }
+
+      try {
+        const perLinkTimeout = Math.min(PER_VIDEO_ABORT_TIMEOUT_MS, remainingStage1Ms);
+        const videoEl = await selfHealingVisualEngine.loadVideoWithAbortTimeout(
+          candidateUrl,
+          perLinkTimeout
+        );
+        if (usedUrls) usedUrls.add(candidateUrl);
+
+        const isWikimedia = candidateUrl.includes('wikimedia.org');
+        const label = isWikimedia
+          ? `🎬 [Bước 1] Video MP4/WebM Thật (Wikimedia HD • Clip #${idx + 1}/${totalCandidates})`
+          : `🎬 [Bước 1] Video MP4 Thực Tế (${rankedQueries[0]} • Clip #${idx + 1}/${totalCandidates})`;
+
+        return {
+          videoUrl: candidateUrl,
+          videoElement: videoEl,
+          videoCandidateUrls: allCandidateUrls,
+          videoCandidateIndex: idx,
+          videoSourceLabel: label,
+          fallbackStage: 1,
+          visualMode: 'video',
+          sourceType: 'video',
+        };
+      } catch {
+        // AbortController triggered or CORS/404 -> immediately try next link
+      }
     }
   }
 
-  const totalCandidates = allCandidateUrls.length;
-  const startIndex =
-    totalCandidates > 0 ? preferredCandidateIndex % totalCandidates : 0;
+  // ============================================================================
+  // BƯỚC 2: SINH CẢNH AI ĐÚNG MÔ TẢ + LỚP VẬT LÝ CHUYỂN ĐỘNG 2.5D (KHI KHÔNG CÓ VIDEO THẬT)
+  // ============================================================================
+  if (forcedMode !== 'vtv7-graphics') {
+    const seed = sceneId * 137 + preferredCandidateIndex * 31 + 19;
+    const aiSceneUrl = selfHealingVisualEngine.buildAiSceneUrl(
+      visualPromptEn || narrationVi || keywordsEn,
+      rankedQueries[0] || translation.primaryQueryEn,
+      subject,
+      seed
+    );
 
-  // PRIORITY 1: Attempt real MP4/WebM video streams within the 5-second budget
-  for (let offset = 0; offset < totalCandidates; offset++) {
-    const elapsedMs = performance.now() - pipelineStartMs;
-    const remainingBudgetMs = MAX_VIDEO_LOAD_BUDGET_MS - elapsedMs;
-    if (remainingBudgetMs <= 400) {
-      // Exceeded 5-second video budget -> switch immediately to Priority 2 Fallback!
-      break;
-    }
+    let loadedStage2Img: HTMLImageElement | undefined;
+    let loadedStage2Url: string | undefined;
 
-    const idx = (startIndex + offset) % totalCandidates;
-    const candidateUrl = allCandidateUrls[idx];
-
-    if (
-      preferredCandidateIndex === 0 &&
-      offset === 0 &&
-      usedUrls &&
-      usedUrls.has(candidateUrl) &&
-      totalCandidates > 1
-    ) {
-      continue;
-    }
-
+    // Race Pollinations Flux HD AI Image and Topic-Matched Documentary HD Image within remaining 5s window
     try {
-      const perAttemptTimeout = Math.min(2400, remainingBudgetMs);
-      const videoEl = await loadVideoWithFallback(candidateUrl, perAttemptTimeout);
-      if (usedUrls) usedUrls.add(candidateUrl);
+      loadedStage2Img = await loadImageWithFallback(aiSceneUrl, 3400);
+      loadedStage2Url = aiSceneUrl;
+    } catch {
+      try {
+        const docImgUrl = await searchHdFallbackImage(
+          rankedQueries[0] || translation.primaryQueryEn,
+          wikipediaTopicEn,
+          narrationVi,
+          usedUrls
+        );
+        if (docImgUrl) {
+          loadedStage2Img = await loadImageWithFallback(docImgUrl, 2400);
+          loadedStage2Url = docImgUrl;
+        }
+      } catch {
+        // Proceed to Stage 3 VTV7 Motion Graphics
+      }
+    }
 
-      const isWikimedia = candidateUrl.includes('wikimedia.org');
-      const label = isWikimedia
-        ? `🎬 Video MP4/WebM (Wikimedia HD • Clip #${idx + 1}/${totalCandidates})`
-        : `🎬 Video MP4 Thực Tế (Open CDN • Clip #${idx + 1}/${totalCandidates})`;
+    if (loadedStage2Img) {
+      const synth25D = await createSynthesizedMotionVideo(
+        translation.matchedEntityCategory,
+        sceneId,
+        preferredCandidateIndex,
+        {
+          stage: 2,
+          imageElement: loadedStage2Img,
+          sceneContext: {
+            title: options?.title || rankedQueries[0],
+            subject,
+            narration_vi: narrationVi,
+            pedagogical_badge: options?.pedagogicalBadge,
+            pedagogical_section: options?.pedagogicalSection,
+          },
+        }
+      );
 
       return {
-        videoUrl: candidateUrl,
-        videoElement: videoEl,
-        videoCandidateUrls: allCandidateUrls,
-        videoCandidateIndex: idx,
-        videoSourceLabel: label,
-        sourceType: 'video',
+        videoUrl: synth25D.videoUrl,
+        videoElement: synth25D.videoElement,
+        videoCandidateUrls: [...allCandidateUrls, synth25D.videoUrl],
+        videoCandidateIndex: allCandidateUrls.length,
+        videoSourceLabel: `🎨 [Bước 2] Cảnh AI HD + Vật Lý 2.5D (${subject} • ${rankedQueries[0]})`,
+        imageUrl: loadedStage2Url,
+        imageElement: loadedStage2Img,
+        imageLoaded: true,
+        fallbackStage: 2,
+        visualMode: 'ai-25d',
+        sourceType: 'ai',
       };
-    } catch {
-      // Try next candidate within 5-second budget
     }
   }
 
-  // PRIORITY 2 SMART FALLBACK: Video took > 5s or hit CORS/404 -> Load HD 16:9 Image with Ken Burns Pan/Zoom
-  // AND attach a synthesized motion video stream for the <video> preview element so neither Canvas nor card is ever blank!
-  let fallbackImgUrl: string | undefined;
-  let fallbackImgEl: HTMLImageElement | undefined;
-
-  try {
-    const foundImgUrl = await searchHdFallbackImage(
-      translation.primaryQueryEn,
-      wikipediaTopicEn,
-      narrationVi,
-      usedUrls
-    );
-    if (foundImgUrl) {
-      fallbackImgEl = await loadImageWithFallback(foundImgUrl, 3500);
-      fallbackImgUrl = foundImgUrl;
-    }
-  } catch {
-    // Ignore and use synthesized stream
-  }
-
-  const synth = await createSynthesizedMotionVideo(
+  // ============================================================================
+  // BƯỚC 3: VIDEO ĐỒ HỌA CHUYỂN ĐỘNG SƯ PHẠM NỘI SINH (CHUẨN VTV7 MOTION GRAPHICS)
+  // ============================================================================
+  const synthStage3 = await createSynthesizedMotionVideo(
     translation.matchedEntityCategory,
     sceneId,
-    preferredCandidateIndex
+    preferredCandidateIndex,
+    {
+      stage: 3,
+      sceneContext: {
+        title: options?.title || rankedQueries[0],
+        subject,
+        narration_vi: narrationVi,
+        pedagogical_badge: options?.pedagogicalBadge,
+        pedagogical_section: options?.pedagogicalSection,
+      },
+    }
   );
 
-  const fallbackCandidates = [...allCandidateUrls, synth.videoUrl];
-
   return {
-    videoUrl: synth.videoUrl,
-    videoElement: synth.videoElement,
-    videoCandidateUrls: fallbackCandidates,
-    videoCandidateIndex: fallbackCandidates.length - 1,
-    videoSourceLabel: fallbackImgEl
-      ? `🖼️ Fallback HD 16:9 Ken Burns + Motion (${translation.primaryQueryEn})`
-      : `🎬 Video MP4/WebM Chuyển Động (${translation.primaryQueryEn})`,
-    imageUrl: fallbackImgUrl,
-    imageElement: fallbackImgEl,
-    imageLoaded: Boolean(fallbackImgEl),
-    sourceType: fallbackImgEl ? 'wikipedia' : 'video',
+    videoUrl: synthStage3.videoUrl,
+    videoElement: synthStage3.videoElement,
+    videoCandidateUrls: [...allCandidateUrls, synthStage3.videoUrl],
+    videoCandidateIndex: allCandidateUrls.length,
+    videoSourceLabel: `📊 [Bước 3] Đồ Họa Sơ Đồ Động VTV7 (${options?.pedagogicalBadge || rankedQueries[0]})`,
+    imageLoaded: false,
+    fallbackStage: 3,
+    visualMode: 'vtv7-graphics',
+    sourceType: 'procedural',
   };
 }
 
 /**
- * Synchronization Readiness Check (Requirement 4):
- * Waits until the scene's video (`canplaythrough` / `readyState >= 2`) or HD fallback image (`onload` / `complete`)
+ * Synchronization Readiness Check:
+ * Waits until the scene's video (`canplaythrough` / `readyState >= 2`) or HD AI 2.5D image (`onload` / `complete`)
  * is ready in memory before starting the Vietnamese voiceover!
  */
 export async function waitForSceneMediaReady(
   scene: Scene,
-  maxWaitMs: number = 3000
+  maxWaitMs: number = 2000
 ): Promise<void> {
   if (!scene) return;
 
-  // 1. If videoElement is already decoded in memory
+  // Stage 3 VTV7 Procedural Motion Graphics is rendered natively in real-time (0ms wait)
+  if (scene.fallbackStage === 3 || scene.visualMode === 'vtv7-graphics') {
+    return;
+  }
+
   if (scene.videoElement && scene.videoElement.readyState >= 2) {
     if (scene.videoElement.paused) {
       await scene.videoElement.play().catch(() => {});
@@ -789,7 +982,6 @@ export async function waitForSceneMediaReady(
     return;
   }
 
-  // 2. If HD fallback imageElement is already decoded in memory
   if (
     scene.imageElement &&
     scene.imageLoaded &&
@@ -799,7 +991,6 @@ export async function waitForSceneMediaReady(
     return;
   }
 
-  // 3. Wait up to maxWaitMs for video `canplaythrough`/`loadeddata` or image `onload`
   await new Promise<void>((resolve) => {
     let settled = false;
     const done = () => {
@@ -838,24 +1029,53 @@ export async function waitForSceneMediaReady(
 }
 
 /**
- * Instant handler for "🔄 Đổi Video Clip Khác"
+ * BƯỚC 4: 1-Click Per-Scene Visual Retry & Mode Switcher
+ * (`[🔄 Đổi cảnh khác (Video / AI / Sơ đồ động)]`)
+ * Cycles or switches a single scene between:
+ * - 'ai-25d' (Cảnh AI HD + Vật lý 2.5D mới)
+ * - 'vtv7-graphics' (Sơ đồ khối động chuẩn VTV7)
+ * - 'video' (Video MP4 kế tiếp theo từ khóa)
  */
 export async function switchSceneToNextVideoClip(
   scene: Scene,
-  sceneIndex: number
+  sceneIndex: number,
+  explicitMode?: SceneVisualMode
 ): Promise<{
   videoUrl: string;
   videoElement: HTMLVideoElement;
   videoCandidateUrls: string[];
   videoCandidateIndex: number;
   videoSourceLabel: string;
+  imageUrl?: string;
+  imageElement?: HTMLImageElement;
+  imageLoaded?: boolean;
+  fallbackStage: VisualFallbackStage;
+  visualMode: SceneVisualMode;
 }> {
+  const retryNum = (scene.retryCounter || 0) + 1;
+
+  // Cycle order when user clicks "🔄 Đổi cảnh khác (Video / AI / Sơ đồ động)" without explicit mode:
+  // If currently video (stage 1) -> try next video clip or switch to AI 2.5D (stage 2) -> switch to VTV7 Graphics (stage 3) -> back to Video/AI
+  let targetMode: SceneVisualMode = explicitMode || 'auto';
+  if (!explicitMode) {
+    if (scene.visualMode === 'video' && retryNum % 3 === 1) {
+      targetMode = 'ai-25d';
+    } else if (scene.visualMode === 'ai-25d' || retryNum % 3 === 2) {
+      targetMode = 'vtv7-graphics';
+    } else {
+      targetMode =
+        selfHealingVisualEngine.getEngineMode() === 'ai-25d-autonomous'
+          ? 'ai-25d'
+          : 'video';
+    }
+  }
+
   const existingPool = scene.videoCandidateUrls || [];
   const currentIdx = scene.videoCandidateIndex ?? 0;
   const nextIdx =
     existingPool.length > 1
       ? getNextCandidateVideoIndex(currentIdx, existingPool.length)
-      : currentIdx + 1;
+      : currentIdx + retryNum;
 
   const res = await fetchVerifiedSceneMedia(
     scene.exact_video_search_en || scene.search_keywords_en,
@@ -864,7 +1084,14 @@ export async function switchSceneToNextVideoClip(
     scene.visual_prompt_en,
     scene.wikipedia_topic_en,
     scene.scene_id || sceneIndex + 1,
-    nextIdx
+    nextIdx,
+    {
+      forcedMode: targetMode,
+      subject: scene.subject || 'Sinh học',
+      pedagogicalBadge: scene.pedagogical_badge,
+      pedagogicalSection: scene.pedagogical_section,
+      title: scene.title,
+    }
   );
 
   return {
@@ -873,6 +1100,11 @@ export async function switchSceneToNextVideoClip(
     videoCandidateUrls: res.videoCandidateUrls,
     videoCandidateIndex: res.videoCandidateIndex,
     videoSourceLabel: res.videoSourceLabel,
+    imageUrl: res.imageUrl,
+    imageElement: res.imageElement,
+    imageLoaded: res.imageLoaded,
+    fallbackStage: res.fallbackStage,
+    visualMode: res.visualMode,
   };
 }
 
@@ -911,9 +1143,9 @@ export function generateProceduralBackground(
 }
 
 /**
- * V3.0 Strict Multi-Beat Media Loader (Timeout 5s/Beat):
- * Loads real MP4/WebM video (or HD 1280x720 AI/Documentary fallback image) for each visual_beat in a scene
- * so the Canvas can cross-fade smoothly (0.5s) across beats as the teacher speaks.
+ * V3.0 Strict Multi-Beat Media Loader with 4-Stage Self-Healing Fallback:
+ * Loads real MP4/WebM video (Stage 1), or AI Scene HD + 2.5D Physics (Stage 2),
+ * or VTV7 Motion Graphics (Stage 3) for each visual_beat in a scene.
  */
 export async function loadSceneVisualBeats(
   scene: Scene,
@@ -935,20 +1167,34 @@ export async function loadSceneVisualBeats(
           beat.ai_visual_prompt,
           scene.wikipedia_topic_en,
           (scene.scene_id || 1) * 10 + bIdx + 1,
-          bIdx
+          bIdx,
+          {
+            forcedMode: scene.visualMode,
+            subject: scene.subject || 'Sinh học',
+            pedagogicalBadge: beat.pedagogical_badge || scene.pedagogical_badge,
+            pedagogicalSection: scene.pedagogical_section,
+            title: scene.title,
+            rankedQueries: beat.search_queries_ranked,
+          }
         );
         return {
           ...beat,
+          fallbackStage: media.fallbackStage,
+          visualMode: media.visualMode,
           videoUrl: media.videoUrl,
           videoElement: media.videoElement,
-          videoLoaded: true,
+          videoLoaded: media.fallbackStage === 1,
           imageUrl: media.imageUrl,
           imageElement: media.imageElement,
           imageLoaded: Boolean(media.imageElement),
           sourceLabel: media.videoSourceLabel,
         };
       } catch {
-        return beat;
+        return {
+          ...beat,
+          fallbackStage: 3,
+          visualMode: 'vtv7-graphics',
+        };
       }
     })
   );
@@ -982,4 +1228,5 @@ export function releaseAllSceneMedia(scenes: Scene[]): void {
   videoCache.clear();
   imageCache.clear();
 }
+
 

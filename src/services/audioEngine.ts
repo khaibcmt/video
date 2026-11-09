@@ -178,10 +178,35 @@ export class VietnameseHumanVoiceEngine {
   }
 
   /**
-   * Initializes the Studio WebAudio Mastering Graph:
+   * Synchronously unlocks the Browser AudioContext inside a direct user click handler (Autoplay Policy fix).
+   * Must be called at the very top of onClick handlers before any async/await calls!
+   */
+  public unlockAudioOnUserGesture(): void {
+    try {
+      const ctx = this.initContextSync();
+      if (ctx.state === 'suspended') {
+        void ctx.resume();
+      }
+      // Play a 1-sample silent buffer to permanently unlock Chrome/Safari/Edge audio output
+      const unlockBuf = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = unlockBuf;
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch {
+      // ignore
+    }
+  }
+
+  public isAudioUnlocked(): boolean {
+    return Boolean(this.audioCtx && this.audioCtx.state === 'running');
+  }
+
+  /**
+   * Synchronous initialization of the Studio WebAudio Mastering Graph:
    * Source -> LowShelf(+3dB@180Hz) -> HighShelf(+2dB@6000Hz) -> DynamicsCompressor -> Analyser -> VoiceGain -> MasterGain & MediaStreamDestination
    */
-  public async ensureContext(): Promise<AudioContext> {
+  private initContextSync(): AudioContext {
     if (!this.audioCtx) {
       const AudioContextClass =
         window.AudioContext || (window as any).webkitAudioContext;
@@ -220,7 +245,7 @@ export class VietnameseHumanVoiceEngine {
       this.masterGain.gain.setValueAtTime(1.0, now);
 
       this.voiceGain = this.audioCtx.createGain();
-      this.voiceGain.gain.setValueAtTime(1.05, now);
+      this.voiceGain.gain.setValueAtTime(1.25, now);
 
       this.musicGain = this.audioCtx.createGain();
       this.musicGain.gain.setValueAtTime(0.0, now);
@@ -257,12 +282,19 @@ export class VietnameseHumanVoiceEngine {
         // ignore
       }
     }
-
-    if (this.audioCtx.state === 'suspended') {
-      await this.audioCtx.resume();
-    }
-
     return this.audioCtx;
+  }
+
+  public async ensureContext(): Promise<AudioContext> {
+    const ctx = this.initContextSync();
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+      } catch {
+        // ignore if called outside gesture; unlockAudioOnUserGesture will resume on click
+      }
+    }
+    return ctx;
   }
 
   /**
@@ -572,6 +604,80 @@ export class VietnameseHumanVoiceEngine {
   }
 
   /**
+   * Secondary stream fallback using HTMLAudioElement routed into WebAudio / Speakers
+   * in case decodeAudioData fails on any browser codec edge case
+   */
+  private playViaHtmlAudioChain(
+    normalizedText: string,
+    token: number,
+    onEnded?: () => void
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (token !== this.playbackToken) {
+        resolve(false);
+        return;
+      }
+
+      const chunks = splitTextIntoChunks(normalizedText, 165);
+      if (chunks.length === 0) {
+        resolve(false);
+        return;
+      }
+
+      let idx = 0;
+      let startedAny = false;
+      this.duckMusic();
+
+      const playNext = () => {
+        if (token !== this.playbackToken) return;
+        if (idx >= chunks.length) {
+          this.activeHtmlAudio = null;
+          this.isVoiceoverPlaying = false;
+          this.restoreMusic();
+          onEnded?.();
+          return;
+        }
+
+        const chunkText = chunks[idx++];
+        const audio = new Audio(`/api/tts?text=${encodeURIComponent(chunkText)}`);
+        audio.crossOrigin = 'anonymous';
+        audio.playbackRate = Math.max(0.85, Math.min(1.15, this.voiceSettings.speed || 1.0));
+        this.activeHtmlAudio = audio;
+
+        audio.onplay = () => {
+          if (!startedAny) {
+            startedAny = true;
+            resolve(true);
+          }
+        };
+
+        audio.onended = () => {
+          if (token !== this.playbackToken) return;
+          setTimeout(playNext, 140);
+        };
+
+        audio.onerror = () => {
+          if (!startedAny) {
+            resolve(false);
+          } else {
+            playNext();
+          }
+        };
+
+        audio.play().catch(() => {
+          if (!startedAny) {
+            resolve(false);
+          } else {
+            playNext();
+          }
+        });
+      };
+
+      playNext();
+    });
+  }
+
+  /**
    * Emergency offline rescue via Web Speech API ONLY if all network streams fail
    */
   private fallbackWebSpeech(
@@ -599,19 +705,6 @@ export class VietnameseHumanVoiceEngine {
           v.name.toLowerCase().includes('vietnam')
       );
 
-      if (!vietnameseVoice && voices.length > 0) {
-        const wordCount = normalizedText.split(/\s+/).length;
-        const durationMs = Math.max(3000, (wordCount / 3.2) * 1000);
-        setTimeout(() => {
-          if (token === this.playbackToken) {
-            this.isVoiceoverPlaying = false;
-            this.restoreMusic();
-            onEnded?.();
-          }
-        }, durationMs);
-        return;
-      }
-
       const chunks = splitTextIntoChunks(normalizedText, 160);
       let idx = 0;
 
@@ -629,6 +722,7 @@ export class VietnameseHumanVoiceEngine {
         const utterance = new SpeechSynthesisUtterance(chunks[idx]);
         idx++;
         utterance.lang = 'vi-VN';
+        utterance.volume = 1.0;
         utterance.rate = this.voiceSettings.speed || 1.0;
         utterance.pitch = this.voiceSettings.voiceId === 'male-neural' ? 0.88 : 1.05;
         if (vietnameseVoice) {
@@ -694,7 +788,18 @@ export class VietnameseHumanVoiceEngine {
 
     if (audioBuffer && this.lowShelfFilter) {
       if (ctx.state === 'suspended') {
-        await ctx.resume();
+        try {
+          await ctx.resume();
+        } catch {
+          // ignore
+        }
+      }
+
+      if (this.masterGain) {
+        this.masterGain.gain.setValueAtTime(1.0, ctx.currentTime);
+      }
+      if (this.voiceGain) {
+        this.voiceGain.gain.setValueAtTime(1.25, ctx.currentTime);
       }
 
       this.duckMusic();
@@ -729,6 +834,12 @@ export class VietnameseHumanVoiceEngine {
 
       source.start(0);
       return exactEffectiveDuration;
+    }
+
+    // Secondary fallback: HTMLAudioElement streaming /api/tts
+    const htmlPlayed = await this.playViaHtmlAudioChain(normalizedText, currentToken, onEnded);
+    if (htmlPlayed) {
+      return null;
     }
 
     // Emergency fallback if offline

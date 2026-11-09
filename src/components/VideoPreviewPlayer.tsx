@@ -15,12 +15,15 @@ import {
   Loader2,
   X,
   Subtitles,
+  ShieldCheck,
+  MonitorPlay,
 } from 'lucide-react';
-import { Scene, ExportProgress } from '../types';
+import { Scene, ExportProgress, EngineVisualMode } from '../types';
 import { CanvasRenderer } from '../services/canvasRenderer';
 import { audioEngine } from '../services/audioEngine';
 import { exportVideo, exportSrtFile, VideoExportFormat } from '../services/exporter';
 import { waitForSceneMediaReady } from '../services/mediaLoader';
+import { selfHealingVisualEngine } from '../services/selfHealingVisualEngine';
 
 interface VideoPreviewPlayerProps {
   scenes: Scene[];
@@ -28,6 +31,8 @@ interface VideoPreviewPlayerProps {
   onResetVideo: () => void;
   selectedSceneIndex: number;
   onSelectScene: (index: number) => void;
+  engineVisualMode?: EngineVisualMode;
+  onEngineVisualModeChange?: (mode: EngineVisualMode) => void;
 }
 
 export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
@@ -36,6 +41,8 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
   onResetVideo,
   selectedSceneIndex,
   onSelectScene,
+  engineVisualMode = 'auto-4-stage',
+  onEngineVisualModeChange,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -50,6 +57,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isDuckingActive, setIsDuckingActive] = useState<boolean>(false);
   const [currentMusicGain, setCurrentMusicGain] = useState<number>(0.25);
+  const [showScreenRecordGuide, setShowScreenRecordGuide] = useState<boolean>(false);
 
   // Export state
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
@@ -135,9 +143,12 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     return t || 0;
   }
 
-  // Main playback loop
+  // Main playback loop with immediate AudioContext unlock & non-blocking Self-Healing Canvas render
   const startPlayback = async (fromSeconds: number = currentTimeSec) => {
     if (scenes.length === 0) return;
+
+    // 1. Synchronous AudioContext unlock on user gesture (prevents browser Autoplay Policy mute)
+    audioEngine.unlockAudioOnUserGesture();
 
     // Cancel any existing animation frame & speech first to prevent overlapping loops
     if (animFrameRef.current) {
@@ -145,8 +156,6 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
       animFrameRef.current = null;
     }
     audioEngine.stopVoiceover();
-
-    await audioEngine.ensureContext();
 
     setIsPlaying(true);
 
@@ -166,14 +175,14 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     setActiveSceneIdx(startIdx);
     onSelectScene(startIdx);
 
-    // Wait until current scene video (canplaythrough) or fallback HD image (onload) is ready in buffer
-    await waitForSceneMediaReady(scenes[startIdx], 2000);
+    // Warm up media in background without delaying audio gesture token!
+    void waitForSceneMediaReady(scenes[startIdx], 1200);
 
     let currentIdx = startIdx;
     let sceneStartTimestamp = performance.now() - initialSceneElapsed * 1000;
     let activeAudioExactDuration: number | null = null;
 
-    // Trigger narration for the current scene and capture exact AudioBuffer.duration
+    // Trigger narration immediately for the current scene and capture exact AudioBuffer.duration
     if (!isMuted) {
       void audioEngine.playVietnameseNarration(
         scenes[startIdx].narration_normalized,
@@ -229,8 +238,9 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
         onSelectScene(currentIdx);
 
         const nextSceneToPlay = scenes[currentIdx];
-        if (!isMuted && nextSceneToPlay) {
-          void waitForSceneMediaReady(nextSceneToPlay, 1500).then(() => {
+        if (nextSceneToPlay) {
+          void waitForSceneMediaReady(nextSceneToPlay, 1000);
+          if (!isMuted) {
             void audioEngine.playVietnameseNarration(
               nextSceneToPlay.narration_normalized,
               undefined,
@@ -238,7 +248,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
                 activeAudioExactDuration = exactSec;
               }
             );
-          });
+          }
         }
       }
 
@@ -288,24 +298,37 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
   };
 
   const handleTogglePlay = () => {
+    audioEngine.unlockAudioOnUserGesture();
     if (isPlaying) {
       pausePlayback();
     } else {
       if (currentTimeSec >= totalDuration - 0.5) {
-        startPlayback(0);
+        void startPlayback(0);
       } else {
-        startPlayback(currentTimeSec);
+        void startPlayback(currentTimeSec);
       }
     }
   };
 
+  const handleStartLessonWithAudio = () => {
+    audioEngine.unlockAudioOnUserGesture();
+    setIsMuted(false);
+    if (currentTimeSec >= totalDuration - 0.5) {
+      void startPlayback(0);
+    } else {
+      void startPlayback(currentTimeSec);
+    }
+  };
+
   const handleReplay = () => {
+    audioEngine.unlockAudioOnUserGesture();
     pausePlayback();
     setCurrentTimeSec(0);
-    startPlayback(0);
+    void startPlayback(0);
   };
 
   const handleSeek = (newTimeSec: number) => {
+    audioEngine.unlockAudioOnUserGesture();
     const clamped = Math.max(0, Math.min(totalDuration, newTimeSec));
     setCurrentTimeSec(clamped);
 
@@ -323,13 +346,14 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
 
     if (isPlaying) {
       pausePlayback();
-      startPlayback(clamped);
+      void startPlayback(clamped);
     } else {
       renderCurrentStaticFrame(idx, (clamped - acc) / scenes[idx].duration_seconds);
     }
   };
 
   const handleToggleMute = () => {
+    audioEngine.unlockAudioOnUserGesture();
     const nextMute = !isMuted;
     setIsMuted(nextMute);
     if (nextMute) {
@@ -337,7 +361,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     } else if (isPlaying) {
       const current = scenes[activeSceneIdx];
       if (current) {
-        audioEngine.playVietnameseNarration(current.narration_normalized);
+        void audioEngine.playVietnameseNarration(current.narration_normalized);
       }
     }
   };
@@ -351,9 +375,22 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     }
   };
 
+  // Phương Án B (Ultimate Fallback): Chế độ Trình Chiếu Toàn Màn Hình & Quay Màn Hình (Win + G / OBS)
+  const handleStartPresentationMode = () => {
+    audioEngine.unlockAudioOnUserGesture();
+    setIsMuted(false);
+    setShowScreenRecordGuide(true);
+    if (containerRef.current && !document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch(() => {});
+    }
+    setCurrentTimeSec(0);
+    void startPlayback(0);
+  };
+
   // Export handlers
   const handleExport = async (format: VideoExportFormat = 'mp4') => {
     if (!canvasRef.current || scenes.length === 0) return;
+    audioEngine.unlockAudioOnUserGesture();
     pausePlayback();
 
     cancelExportRef.current = false;
@@ -386,7 +423,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     try {
       exportSrtFile(scenes, lessonTitle);
     } catch (err: any) {
-      alert(err.message || 'Không thể xuất phụ đề');
+      console.error(err.message || 'Không thể xuất phụ đề');
     }
   };
 
@@ -397,11 +434,92 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
+  const handleSwitchEngineMode = (nextMode: EngineVisualMode) => {
+    selfHealingVisualEngine.setEngineMode(nextMode);
+    if (onEngineVisualModeChange) {
+      onEngineVisualModeChange(nextMode);
+    }
+    renderCurrentStaticFrame(activeSceneIdx, 0);
+  };
+
   return (
     <div
       ref={containerRef}
       className="bg-slate-900/95 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col relative group/player"
     >
+      {/* Top Self-Healing Visual Engine Mode Bar & Phương Án B (Ultimate Fallback) */}
+      <div className="px-4 py-2.5 bg-slate-950/95 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1 mr-1">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Self-Healing Engine:</span>
+          </span>
+
+          <button
+            type="button"
+            onClick={() => handleSwitchEngineMode('auto-4-stage')}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition flex items-center gap-1 ${
+              engineVisualMode === 'auto-4-stage'
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm'
+                : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+            title="Tự động 4 bước: (1) Video MP4 2.5s timeout -> (2) Ảnh AI 1280x720 + Vật lý 2.5D -> (3) Sơ đồ động VTV7 -> (4) Watchdog chống màn hình đen"
+          >
+            <span>🛡️ Đa Tầng Tự Phục Hồi (4 Bước)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSwitchEngineMode('ai-25d-autonomous')}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition flex items-center gap-1 ${
+              engineVisualMode === 'ai-25d-autonomous'
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
+                : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+            title="Chế Độ Tự Chủ: Canvas + AI Image 2.5D + WebAudio (Bỏ qua hoàn toàn nguồn Video ngoài, tạo cảnh AI đúng 100% mô tả)"
+          >
+            <span>⚡ Chế Độ Tự Chủ: Ảnh AI 2.5D + Vật Lý (Bỏ qua Video ngoài)</span>
+          </button>
+        </div>
+
+        {/* Phương Án B: Trình Chiếu & Quay Màn Hình 100% Thành Công */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleStartPresentationMode}
+            disabled={scenes.length === 0}
+            className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[11px] font-semibold flex items-center gap-1.5 transition disabled:opacity-40"
+            title="Phương Án B: Mở toàn màn hình 1280x720 kèm tiếng giảng để quay bằng Windows+G hoặc OBS Studio"
+          >
+            <MonitorPlay className="w-3.5 h-3.5 text-amber-400" />
+            <span>🖥️ Trình Chiếu & Quay Màn Hình (Win+G)</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Optional Screen Recording Guide Banner (Phương Án B) */}
+      {showScreenRecordGuide && (
+        <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 flex items-center justify-between gap-3 text-xs text-amber-200">
+          <div className="flex items-center gap-2">
+            <MonitorPlay className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>Chế độ Trình Chiếu Siêu Ổn Định (Phương Án B):</strong> Nhấn tổ hợp phím{' '}
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-900 border border-amber-500/40 text-amber-300 font-mono text-[11px]">
+                Windows + Alt + R
+              </kbd>{' '}
+              (hoặc <kbd className="px-1.5 py-0.5 rounded bg-slate-900 border border-amber-500/40 text-amber-300 font-mono text-[11px]">Windows + G</kbd> / OBS) để ghi trực tiếp bài giảng 60fps kèm âm thanh nổi 100%.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowScreenRecordGuide(false)}
+            className="text-amber-300 hover:text-white p-1"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Canvas Video Viewport (16:9 Aspect Ratio) */}
       <div className="relative w-full aspect-video bg-black flex items-center justify-center overflow-hidden">
         <canvas
@@ -412,15 +530,22 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
           onClick={handleTogglePlay}
         />
 
-        {/* Center Play Overlay Icon when paused */}
+        {/* Prominent "🚀 Khởi động & Phát Bài Giảng" Button when paused (Unlocks WebAudio Context on User Gesture) */}
         {!isPlaying && !exportProgress?.isExporting && scenes.length > 0 && (
-          <button
-            onClick={handleTogglePlay}
-            className="absolute inset-0 m-auto w-16 h-16 rounded-full bg-amber-500/90 hover:bg-amber-400 text-slate-950 flex items-center justify-center shadow-2xl shadow-amber-500/50 backdrop-blur-md transform transition hover:scale-110 active:scale-95"
-            aria-label="Phát video"
-          >
-            <Play className="w-8 h-8 ml-1 fill-current" />
-          </button>
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/35 backdrop-blur-[2px] pointer-events-none">
+            <button
+              type="button"
+              onClick={handleStartLessonWithAudio}
+              className="pointer-events-auto px-6 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-extrabold text-sm uppercase tracking-wider flex items-center gap-2.5 shadow-2xl shadow-amber-500/50 transform transition hover:scale-105 active:scale-95 border border-yellow-200/60"
+              aria-label="Khởi động và Phát Bài Giảng có tiếng"
+            >
+              <Play className="w-5 h-5 fill-current" />
+              <span>🚀 Khởi Động & Phát Bài Giảng (Bật Tiếng AI)</span>
+            </button>
+            <span className="mt-2 px-3 py-1 rounded-full bg-slate-950/85 border border-slate-700/80 text-[11px] text-emerald-300 font-medium">
+              🔊 Đã tích hợp mở khóa WebAudio trực tiếp & chống màn hình đen 4 tầng
+            </span>
+          </div>
         )}
 
         {/* Empty state overlay */}
@@ -433,7 +558,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
               Chưa có phân cảnh nào được dựng
             </h3>
             <p className="text-xs text-slate-400 max-w-md">
-              Nhập kịch bản ở khung bên trái hoặc chọn kịch bản mẫu và nhấn "✨ Phân Tích & Dựng Phân Cảnh" để tạo video 16:9 đồng cấu hình ảnh và lời thoại tiếng Việt.
+              Nhập Tên bài học & Chỉ dẫn Đạo diễn ở khung bên trái rồi nhấn "🚀 TỰ ĐỘNG TẠO KỊCH BẢN & DỰNG VIDEO CHUYỂN ĐỘNG" để tạo bài giảng 16:9 đồng cấu hình ảnh và giọng giảng tiếng Việt.
             </p>
           </div>
         )}
@@ -495,17 +620,23 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
       {/* Control Bar */}
       <div className="px-5 py-3.5 bg-slate-950/90 flex flex-wrap items-center justify-between gap-4 border-t border-slate-800/60">
         {/* Left: Playback buttons & Timecode */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
           <button
             onClick={handleTogglePlay}
             disabled={scenes.length === 0}
-            className="p-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition shadow-md shadow-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-            title={isPlaying ? 'Tạm dừng (Space)' : 'Phát (Space)'}
+            className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition shadow-md shadow-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+            title={isPlaying ? 'Tạm dừng (Space)' : 'Khởi động & Phát Bài Giảng (Space)'}
           >
             {isPlaying ? (
-              <Pause className="w-4 h-4 fill-current" />
+              <>
+                <Pause className="w-4 h-4 fill-current" />
+                <span>Tạm dừng</span>
+              </>
             ) : (
-              <Play className="w-4 h-4 fill-current ml-0.5" />
+              <>
+                <Play className="w-4 h-4 fill-current" />
+                <span>🚀 Phát Bài Giảng</span>
+              </>
             )}
           </button>
 
@@ -537,14 +668,14 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
             <span className="text-slate-400">{formatTime(totalDuration)}</span>
           </div>
 
-          {/* Pure Vietnamese Voiceover Status (No Background Music) */}
+          {/* Pure Vietnamese Voiceover Status */}
           <div
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-all ${
               isDuckingActive
                 ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-sm'
                 : 'bg-slate-900 text-slate-400 border-slate-800'
             }`}
-            title="Chế độ âm thanh tập trung 100% vào lời thoại tiếng Việt (Đã tắt nhạc nền)"
+            title="Chế độ âm thanh tập trung vào lời thoại tiếng Việt truyền cảm"
           >
             <Mic
               className={`w-3.5 h-3.5 ${
@@ -552,7 +683,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
               }`}
             />
             <span>
-              {isDuckingActive ? 'Đang đọc lời thoại (100%)' : 'Lời thoại: Sẵn sàng (Không nhạc nền)'}
+              {isDuckingActive ? '🔊 Đang đọc lời thoại AI' : '🎙️ Lời thoại: Sẵn sàng'}
             </span>
           </div>
         </div>

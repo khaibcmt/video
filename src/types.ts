@@ -26,6 +26,12 @@ export interface ExternalApiKeysConfig {
   fptAiApiKey: string;
 }
 
+export type VisualFallbackStage = 1 | 2 | 3;
+
+export type SceneVisualMode = 'auto' | 'video' | 'ai-25d' | 'vtv7-graphics';
+
+export type EngineVisualMode = 'auto-4-stage' | 'ai-25d-autonomous';
+
 export interface VisualBeat {
   beat_id: number;
   trigger_phrase: string;
@@ -34,7 +40,9 @@ export interface VisualBeat {
   ai_visual_prompt: string;
   pedagogical_badge: string;
   camera_motion?: CameraMotion;
-  // Runtime loaded media for this beat
+  // Runtime loaded media for this beat (SelfHealingVisualEngine Stages 1-3)
+  fallbackStage?: VisualFallbackStage;
+  visualMode?: SceneVisualMode;
   videoUrl?: string;
   videoElement?: HTMLVideoElement | null;
   videoLoaded?: boolean;
@@ -47,6 +55,7 @@ export interface VisualBeat {
 export interface Scene {
   scene_id: number;
   title: string;
+  subject?: SubjectOption;
   pedagogical_section?: string;
   narration_vi: string;
   narration_normalized: string;
@@ -59,6 +68,9 @@ export interface Scene {
   camera_motion: CameraMotion;
   lut_style: LutStyle;
   duration_seconds: number;
+  fallbackStage?: VisualFallbackStage;
+  visualMode?: SceneVisualMode;
+  retryCounter?: number;
   videoUrl?: string;
   videoElement?: HTMLVideoElement | null;
   videoLoaded?: boolean;

@@ -741,14 +741,18 @@ export function generateAutonomousPedagogicalScenes(
     const cleanNarration = cleanExtraneousInstructions(rawNarration);
     const normNarration = normalizeVietnameseNumbers(cleanNarration);
     const translation = translateNarrationToVideoQueries(
-      cleanNarration,
+      `${cleanNarration} ${matchedInstruction}`,
       tpl.exactVideoQuery,
       tpl.wikiTopic
     );
+    const effectiveQueryEn =
+      translation.matchedEntityCategory !== 'default_nature'
+        ? translation.primaryQueryEn
+        : tpl.exactVideoQuery || translation.primaryQueryEn;
     const badge = extractPedagogicalBadge(cleanNarration, directorInstructions, tpl.badge);
     const beats = buildVisualBeatsForScene(
       cleanNarration,
-      tpl.exactVideoQuery || translation.primaryQueryEn,
+      effectiveQueryEn,
       tpl.titleSuffix,
       directorInstructions
     );
@@ -756,22 +760,24 @@ export function generateAutonomousPedagogicalScenes(
     return {
       scene_id: idx + 1,
       title: `${tpl.section.split(':')[0]}: ${tpl.titleSuffix}`,
+      subject,
       pedagogical_section: tpl.section,
       narration_vi: cleanNarration,
       narration_normalized: normNarration,
-      exact_video_search_en: tpl.exactVideoQuery || translation.primaryQueryEn,
-      search_keywords_en: tpl.exactVideoQuery || translation.primaryQueryEn,
-      visual_prompt_en: `Cinematic 16:9 HD educational documentary video of ${tpl.exactVideoQuery}, ${matchedInstruction}`,
+      exact_video_search_en: effectiveQueryEn,
+      search_keywords_en: effectiveQueryEn,
+      visual_prompt_en: `Cinematic 16:9 HD educational documentary visual of ${effectiveQueryEn}, ${matchedInstruction || cleanTopic}`,
       wikipedia_topic_en: tpl.wikiTopic,
       pedagogical_badge: badge,
       visual_beats: beats,
       camera_motion: motions[idx % motions.length],
       lut_style: luts[idx % luts.length],
       duration_seconds: calculateSceneDuration(normNarration),
-      videoUrl: translation.curatedVideoUrls[0],
+      fallbackStage: 3,
+      visualMode: 'auto',
       videoCandidateUrls: translation.curatedVideoUrls,
       videoCandidateIndex: 0,
-      videoSourceLabel: `🎬 Video MP4/WebM (${tpl.exactVideoQuery})`,
+      videoSourceLabel: `🔄 Đang nạp Media 4 Tầng (${effectiveQueryEn})...`,
       imageSourceType: 'video',
     };
   });
@@ -905,6 +911,7 @@ export async function analyzeScript({
           return {
             scene_id: s.scene_id || idx + 1,
             title: s.title || `Phân cảnh ${idx + 1}`,
+            subject,
             pedagogical_section: s.pedagogical_section || `Phần ${Math.min(4, idx + 1)}`,
             narration_vi: cleanNarration,
             narration_normalized: narrationNorm,
@@ -917,10 +924,11 @@ export async function analyzeScript({
             camera_motion: s.camera_motion || 'zoom-in',
             lut_style: s.lut_style || 'cinematic-teal-orange',
             duration_seconds: duration,
-            videoUrl: translation.curatedVideoUrls[0],
+            fallbackStage: 3,
+            visualMode: 'auto',
             videoCandidateUrls: translation.curatedVideoUrls,
             videoCandidateIndex: 0,
-            videoSourceLabel: `🎬 Video MP4/WebM (${exactSearchEn})`,
+            videoSourceLabel: `🔄 Đang nạp Media 4 Tầng (${exactSearchEn})...`,
             imageSourceType: 'video',
           };
         });

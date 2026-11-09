@@ -4,7 +4,13 @@ import { ScriptInputPanel } from './components/ScriptInputPanel';
 import { VideoPreviewPlayer } from './components/VideoPreviewPlayer';
 import { SceneListEditor } from './components/SceneListEditor';
 import { KeyManagerModal } from './components/KeyManagerModal';
-import { Scene, ThinkingLevelOption, SubjectOption, VoiceSettings } from './types';
+import {
+  Scene,
+  ThinkingLevelOption,
+  SubjectOption,
+  VoiceSettings,
+  EngineVisualMode,
+} from './types';
 import {
   analyzeScript,
   scaleScenesToTargetDuration,
@@ -16,6 +22,7 @@ import {
   releaseAllSceneMedia,
 } from './services/mediaLoader';
 import { audioEngine } from './services/audioEngine';
+import { selfHealingVisualEngine } from './services/selfHealingVisualEngine';
 
 export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.8-flash');
@@ -29,6 +36,9 @@ export default function App() {
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() =>
     audioEngine.getVoiceSettings()
   );
+  const [engineVisualMode, setEngineVisualMode] = useState<EngineVisualMode>(() =>
+    selfHealingVisualEngine.getEngineMode()
+  );
   const [scriptText, setScriptText] = useState<string>('');
   const [targetDurationSec, setTargetDurationSec] = useState<number>(60);
   const [scenes, setScenes] = useState<Scene[]>([]);
@@ -37,11 +47,12 @@ export default function App() {
   const [analysisStatus, setAnalysisStatus] = useState<string>('');
 
   const handleVoiceSettingsChange = (updated: Partial<VoiceSettings>) => {
+    audioEngine.unlockAudioOnUserGesture();
     audioEngine.updateVoiceSettings(updated);
     setVoiceSettings(audioEngine.getVoiceSettings());
   };
 
-  // Preload distinct, homologous real motion video streams + Multi-Beat media per scene in parallel
+  // Preload distinct, homologous real motion video streams + 4-Stage Self-Healing fallback per scene in parallel
   const loadMediaForScenes = useCallback(async (scenesToLoad: Scene[]) => {
     const usedUrls = new Set<string>();
 
@@ -56,7 +67,14 @@ export default function App() {
               scene.visual_prompt_en,
               scene.wikipedia_topic_en,
               scene.scene_id || index + 1,
-              index
+              index,
+              {
+                subject: scene.subject,
+                pedagogicalBadge: scene.pedagogical_badge,
+                pedagogicalSection: scene.pedagogical_section,
+                title: scene.title,
+                forcedMode: scene.visualMode || 'auto',
+              }
             ),
             loadSceneVisualBeats(scene, usedUrls),
           ]);
@@ -69,10 +87,11 @@ export default function App() {
                   ...copy[index],
                   videoUrl: media.videoUrl,
                   videoElement: media.videoElement,
-                  videoLoaded: true,
+                  videoLoaded: Boolean(media.videoElement),
                   videoCandidateUrls: media.videoCandidateUrls,
                   videoCandidateIndex: media.videoCandidateIndex,
                   videoSourceLabel: media.videoSourceLabel,
+                  fallbackStage: media.fallbackStage,
                   imageUrl: media.imageUrl,
                   imageElement: media.imageElement,
                   imageLoaded: Boolean(media.imageElement),
@@ -91,10 +110,20 @@ export default function App() {
     );
   }, []);
 
+  const handleEngineVisualModeChange = (mode: EngineVisualMode) => {
+    selfHealingVisualEngine.setEngineMode(mode);
+    setEngineVisualMode(mode);
+    if (scenes.length > 0) {
+      void loadMediaForScenes(scenes);
+    }
+  };
+
   // Handle Autonomous AI Director V3.0 1-Click Script & Video Generation
   const handleAnalyzeScript = async () => {
     if (!lessonTitle.trim() && !scriptText.trim() && !directorInstructions.trim()) return;
 
+    // Unlock browser AudioContext synchronously on click!
+    audioEngine.unlockAudioOnUserGesture();
     audioEngine.stopAll();
     setIsAnalyzing(true);
     setAnalysisStatus(
@@ -118,7 +147,7 @@ export default function App() {
       setScenes(generatedScenes);
       setSelectedSceneIndex(0);
       setAnalysisStatus(
-        'Đang nạp luồng Multi-Beat Video MP4 & tổng hợp giọng đọc Neural AI...'
+        'Đang nạp luồng Self-Healing 4 Tầng (Video MP4 / Ảnh AI 2.5D / Sơ đồ VTV7) & tổng hợp giọng đọc Neural AI...'
       );
 
       // Load media & pre-warm neural voice buffers in background
@@ -195,6 +224,7 @@ export default function App() {
     const defaultNarration = 'Nhập nội dung lời bình tiếng Việt cho phân cảnh này.';
     const newScene: Scene = {
       scene_id: newId,
+      subject,
       pedagogical_section: 'Phần 4: Ứng dụng thực tiễn & Tổng kết',
       title: `Phân cảnh mới ${newId}`,
       narration_vi: defaultNarration,
@@ -202,6 +232,9 @@ export default function App() {
       exact_video_search_en: 'swimming catfish underwater',
       search_keywords_en: 'swimming catfish underwater',
       pedagogical_badge: 'Kiến thức trọng tâm',
+      fallbackStage: 3,
+      visualMode: 'auto',
+      retryCounter: 0,
       visual_beats: buildVisualBeatsForScene(
         defaultNarration,
         'swimming catfish underwater',
@@ -264,7 +297,7 @@ export default function App() {
           />
         </div>
 
-        {/* Right Column (7 cols): Video Preview Player (16:9 Canvas + Studio WebAudio) */}
+        {/* Right Column (7 cols): Video Preview Player (16:9 Canvas + Studio WebAudio + 4-Stage Self-Healing) */}
         <div className="lg:col-span-7 flex flex-col gap-6 order-1 lg:order-2">
           <VideoPreviewPlayer
             scenes={scenes}
@@ -272,34 +305,36 @@ export default function App() {
             onResetVideo={handleResetVideo}
             selectedSceneIndex={selectedSceneIndex}
             onSelectScene={setSelectedSceneIndex}
+            engineVisualMode={engineVisualMode}
+            onEngineVisualModeChange={handleEngineVisualModeChange}
           />
 
-          {/* V3.0 Architecture Highlights */}
+          {/* V3.0 + 4-Stage Self-Healing Architecture Highlights */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-amber-400 font-bold block mb-1">
-                🧠 Gemini Scene-Graph & Visual Beats
+                🛡️ 4-Stage Self-Healing Visual Engine
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Chia mỗi cảnh thành 2–3 nhịp hình ảnh (Visual Beats) khớp từng cụm lời thoại, tự động gắn nhãn công thức và hiểu sâu Chỉ dẫn Đạo diễn.
+                Tự động chuyển mượt 4 tầng: (1) Video MP4 2.5s timeout → (2) Ảnh AI 1280x720 + Vật lý 2.5D → (3) Đồ họa chuyển động VTV7 → (4) Watchdog chống đen hình.
               </p>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-emerald-400 font-bold block mb-1">
-                🎙️ Human-Like Neural Voice & Studio EQ
+                🎙️ Mở Khóa WebAudio & Giọng AI Truyền Cảm
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Giọng Cô Giáo / Thầy Giáo truyền cảm qua chuỗi lọc phòng thu BiquadFilter (+3dB@180Hz, +2dB@6000Hz), DynamicsCompressor & Audio Ducking -18dB.
+                Tự động mở khóa AudioContext ngay khi bấm nút, kết hợp đa nguồn TTS tiếng Việt + bộ lọc phòng thu EQ ấm áp và thu trực tiếp vào file xuất.
               </p>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
               <span className="text-cyan-400 font-bold block mb-1">
-                🎬 Đồng Bộ AudioBuffer & Xuất MP4 Có Tiếng
+                ⚡ Chế Độ Tự Chủ AI 2.5D & Phương Án B
               </span>
               <p className="text-slate-400 leading-relaxed text-[11px]">
-                Khớp tuyệt đối khung hình, phụ đề Karaoke & sóng âm theo AudioBuffer.duration, thu trực tiếp luồng tiếng vào file MP4/WebM.
+                Hỗ trợ chế độ tự chủ 100% ảnh AI + hạt vật lý theo môn học và chế độ trình chiếu toàn màn hình để quay nhanh bằng Windows+G / OBS.
               </p>
             </div>
           </div>

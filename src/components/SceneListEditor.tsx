@@ -15,10 +15,11 @@ import {
   Clock,
   Video,
 } from 'lucide-react';
-import { Scene, CameraMotion, LutStyle } from '../types';
+import { Scene, CameraMotion, LutStyle, SceneVisualMode } from '../types';
 import { audioEngine } from '../services/audioEngine';
 import {
   fetchVerifiedSceneMedia,
+  loadSceneVisualBeats,
   switchSceneToNextVideoClip,
 } from '../services/mediaLoader';
 import { translateNarrationToVideoQueries } from '../services/videoQueryTranslator';
@@ -54,26 +55,56 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
   const totalCurrentDuration = scenes.reduce((acc, s) => acc + s.duration_seconds, 0);
 
   const handleTestTts = (scene: Scene) => {
-    audioEngine.playVietnameseNarration(scene.narration_normalized);
+    audioEngine.unlockAudioOnUserGesture();
+    void audioEngine.playVietnameseNarration(scene.narration_normalized);
   };
 
   /**
-   * Cycles to the next MP4/WebM video clip in the scene's topic pool ("🔄 Đổi Video Clip Khác")
+   * BƯỚC 4: 1-Click Per-Scene Visual Retry & Mode Switcher
+   * ("[🔄 Đổi cảnh khác (Video / AI / Sơ đồ động)]")
    */
-  const handleSwitchNextVideoClip = async (index: number) => {
+  const handleSwitchNextVideoClip = async (
+    index: number,
+    explicitMode?: SceneVisualMode
+  ) => {
     const scene = scenes[index];
     if (!scene) return;
     setSwitchingSceneIdx(index);
     try {
-      const nextMedia = await switchSceneToNextVideoClip(scene, index);
-      onUpdateScene(index, {
+      const nextMedia = await switchSceneToNextVideoClip(scene, index, explicitMode);
+      const updatedBeats = (scene.visual_beats || []).map((b) => ({
+        ...b,
+        fallbackStage: nextMedia.fallbackStage,
+        visualMode: nextMedia.visualMode,
         videoUrl: nextMedia.videoUrl,
         videoElement: nextMedia.videoElement,
-        videoLoaded: true,
+        videoLoaded: nextMedia.fallbackStage === 1,
+        imageUrl: nextMedia.imageUrl ?? b.imageUrl,
+        imageElement: nextMedia.imageElement ?? b.imageElement,
+        imageLoaded: Boolean(nextMedia.imageElement ?? b.imageElement),
+        sourceLabel: nextMedia.videoSourceLabel,
+      }));
+
+      onUpdateScene(index, {
+        retryCounter: (scene.retryCounter || 0) + 1,
+        fallbackStage: nextMedia.fallbackStage,
+        visualMode: nextMedia.visualMode,
+        videoUrl: nextMedia.videoUrl,
+        videoElement: nextMedia.videoElement,
+        videoLoaded: nextMedia.fallbackStage === 1,
         videoCandidateUrls: nextMedia.videoCandidateUrls,
         videoCandidateIndex: nextMedia.videoCandidateIndex,
         videoSourceLabel: nextMedia.videoSourceLabel,
-        imageSourceType: 'video',
+        imageUrl: nextMedia.imageUrl,
+        imageElement: nextMedia.imageElement,
+        imageLoaded: Boolean(nextMedia.imageElement),
+        visual_beats: updatedBeats,
+        imageSourceType:
+          nextMedia.fallbackStage === 1
+            ? 'video'
+            : nextMedia.fallbackStage === 2
+            ? 'ai'
+            : 'procedural',
       });
     } finally {
       setSwitchingSceneIdx(null);
@@ -81,7 +112,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
   };
 
   /**
-   * Re-queries the Direct Video Stream Pipeline based on the scene's narration & English keywords
+   * Re-queries the 4-Stage Self-Healing Visual Pipeline based on the scene's narration & English keywords
    */
   const handleRefetchVideoFromNarration = async (index: number, customKeywords?: string) => {
     const scene = scenes[index];
@@ -102,15 +133,30 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
         scene.visual_prompt_en,
         scene.wikipedia_topic_en,
         scene.scene_id || index + 1,
-        0
+        0,
+        {
+          subject: scene.subject || 'Sinh học',
+          pedagogicalBadge: scene.pedagogical_badge,
+          pedagogicalSection: scene.pedagogical_section,
+          title: scene.title,
+        }
       );
+
+      const loadedBeats = await loadSceneVisualBeats({
+        ...scene,
+        exact_video_search_en: effectiveKeywords,
+        search_keywords_en: effectiveKeywords,
+        visualMode: media.visualMode,
+      });
 
       onUpdateScene(index, {
         exact_video_search_en: effectiveKeywords,
         search_keywords_en: effectiveKeywords,
+        fallbackStage: media.fallbackStage,
+        visualMode: media.visualMode,
         videoUrl: media.videoUrl,
         videoElement: media.videoElement,
-        videoLoaded: true,
+        videoLoaded: media.fallbackStage === 1,
         videoCandidateUrls: media.videoCandidateUrls,
         videoCandidateIndex: media.videoCandidateIndex,
         videoSourceLabel: media.videoSourceLabel,
@@ -118,6 +164,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
         imageElement: media.imageElement,
         imageLoaded: Boolean(media.imageElement),
         imageSourceType: media.sourceType,
+        visual_beats: loadedBeats.length > 0 ? loadedBeats : scene.visual_beats,
       });
     } finally {
       setSwitchingSceneIdx(null);
@@ -356,10 +403,16 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                       className="w-full h-full object-cover"
                     />
 
-                    {/* Live Video Clip Status Badge */}
+                    {/* Live Self-Healing Stage Badge */}
                     <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-emerald-500/90 text-slate-950 font-bold text-[10px] uppercase tracking-wider shadow flex items-center gap-1">
                       <Video className="w-3 h-3" />
-                      <span>Clip {currentClipNum}/{candidateCount}</span>
+                      <span>
+                        {scene.fallbackStage === 1
+                          ? `Bước 1: Video (${currentClipNum}/${candidateCount})`
+                          : scene.fallbackStage === 2
+                          ? 'Bước 2: AI 2.5D + Vật lý'
+                          : 'Bước 3: Sơ đồ động VTV7'}
+                      </span>
                     </span>
 
                     {/* Upload Custom MP4 Button in Top-Right Corner */}
@@ -377,7 +430,7 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                     </button>
                   </div>
 
-                  {/* Dedicated Button: "🔄 Đổi Video Clip Khác" */}
+                  {/* BƯỚC 4: Dedicated Button "[🔄 Đổi cảnh khác (Video / AI / Sơ đồ động)]" */}
                   <button
                     type="button"
                     onClick={(e) => {
@@ -385,19 +438,73 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                       handleSwitchNextVideoClip(idx);
                     }}
                     disabled={isSwitching}
-                    aria-label={`Đổi Video Clip Khác cảnh ${idx + 1}`}
-                    className="w-full py-1.5 px-2.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-[11px] font-bold flex items-center justify-center gap-1.5 transition active:scale-98 disabled:opacity-50"
-                    title="Đổi ngay sang video MP4 chuyển động kế tiếp cùng chủ đề"
+                    aria-label={`Đổi cảnh khác (Video / AI / Sơ đồ động) cảnh ${idx + 1}`}
+                    className="w-full py-1.5 px-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-[10.5px] font-bold flex items-center justify-center gap-1.5 transition active:scale-98 disabled:opacity-50"
+                    title="Bấm 1 chạm để tái tạo riêng hình ảnh của cảnh này (Video MP4 / Ảnh AI 2.5D / Sơ đồ động VTV7)"
                   >
                     <RefreshCw
-                      className={`w-3.5 h-3.5 text-amber-400 ${
+                      className={`w-3.5 h-3.5 text-amber-400 shrink-0 ${
                         isSwitching ? 'animate-spin' : ''
                       }`}
                     />
-                    <span>
-                      {isSwitching ? 'Đang nạp video kế tiếp...' : '🔄 Đổi Video Clip Khác'}
+                    <span className="truncate">
+                      {isSwitching
+                        ? 'Đang tái tạo cảnh...'
+                        : '🔄 Đổi cảnh khác (Video / AI / Sơ đồ động)'}
                     </span>
                   </button>
+
+                  {/* Quick 1-Touch Stage Selector Pills */}
+                  <div className="grid grid-cols-3 gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSwitchNextVideoClip(idx, 'video');
+                      }}
+                      disabled={isSwitching}
+                      className={`py-1 px-1.5 rounded text-[10px] font-semibold border transition ${
+                        scene.fallbackStage === 1
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                      }`}
+                      title="Bước 1: Tìm Video MP4 thật theo từ khóa"
+                    >
+                      🎬 Video
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSwitchNextVideoClip(idx, 'ai-25d');
+                      }}
+                      disabled={isSwitching}
+                      className={`py-1 px-1.5 rounded text-[10px] font-semibold border transition ${
+                        scene.fallbackStage === 2
+                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                      }`}
+                      title="Bước 2: Tạo Ảnh AI HD + Lớp Vật lý 2.5D"
+                    >
+                      🎨 AI 2.5D
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSwitchNextVideoClip(idx, 'vtv7-graphics');
+                      }}
+                      disabled={isSwitching}
+                      className={`py-1 px-1.5 rounded text-[10px] font-semibold border transition ${
+                        scene.fallbackStage === 3
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                      }`}
+                      title="Bước 3: Vẽ Sơ đồ khối động chuẩn VTV7"
+                    >
+                      📊 Sơ đồ VTV7
+                    </button>
+                  </div>
                 </div>
 
                 {/* Right (7 cols): Specialized Video Query, Camera Motion, and LUT */}

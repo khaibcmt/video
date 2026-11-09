@@ -197,21 +197,18 @@ export const SPECIALIZED_VI_TO_VIDEO_QUERY_MAP: Array<{
  */
 export const CURATED_OPEN_VIDEO_POOL: Record<string, string[]> = {
   aquaculture_fish: [
-    'https://upload.wikimedia.org/wikipedia/commons/e/e7/Autonomous_Underwater_Vehicle_%28AUV%29_in_the_Flinders_Australian_Marine_Park.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/1/12/Swimming_with_the_sea_turtle_up_close_in_Moalboal_Cebu.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-fish-swimming-underwater-in-an-aquarium-34565-large.mp4',
     'https://assets.mixkit.co/videos/preview/mixkit-school-of-fish-swimming-underwater-4102-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-colorful-fish-swimming-in-a-coral-reef-4352-large.mp4',
   ],
   aquaculture_shrimp: [
-    'https://upload.wikimedia.org/wikipedia/commons/0/0f/Waterfall-1013190%2C_Dingle_Peninsula%2C_Co._Kerry%2C_Ireland.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/e/e7/Autonomous_Underwater_Vehicle_%28AUV%29_in_the_Flinders_Australian_Marine_Park.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-water-splashing-in-slow-motion-1197-large.mp4',
     'https://assets.mixkit.co/videos/preview/mixkit-bubbles-rising-in-blue-water-1194-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-waves-in-the-water-1164-large.mp4',
   ],
   marine_life: [
     'https://upload.wikimedia.org/wikipedia/commons/1/12/Swimming_with_the_sea_turtle_up_close_in_Moalboal_Cebu.webm',
     'https://upload.wikimedia.org/wikipedia/commons/5/5c/Swimming_with_the_Sea_Turtle_in_Moalboal1.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/e/e7/Autonomous_Underwater_Vehicle_%28AUV%29_in_the_Flinders_Australian_Marine_Park.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-colorful-fish-swimming-in-a-coral-reef-4352-large.mp4',
   ],
   turtle: [
@@ -227,35 +224,32 @@ export const CURATED_OPEN_VIDEO_POOL: Record<string, string[]> = {
   classroom: [
     'https://assets.mixkit.co/videos/preview/mixkit-students-working-together-in-a-library-4729-large.mp4',
     'https://assets.mixkit.co/videos/preview/mixkit-woman-studying-and-taking-notes-in-a-notebook-4733-large.mp4',
-    'https://upload.wikimedia.org/wikipedia/commons/3/36/Morning_Espresso_Routine_-_Progress%2C_Results%2C_Observations_and_Miscellany.webm',
+    'https://assets.mixkit.co/videos/preview/mixkit-teacher-explaining-a-lesson-in-class-4745-large.mp4',
   ],
   science_lab: [
-    'https://upload.wikimedia.org/wikipedia/commons/c/c7/Kaffeemaschine_2.0_Bohnen_r%C3%B6sten_mit_Wirbelschicht_ICEBE_B25.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/7/77/Kaffeemaschine_2.0_Zyklon_ICEBE_B25.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-scientist-looking-through-a-microscope-in-a-laboratory-4753-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-researcher-working-with-test-tubes-in-laboratory-4756-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-chemical-liquid-in-a-flask-in-a-laboratory-4751-large.mp4',
   ],
   technology: [
-    'https://upload.wikimedia.org/wikipedia/commons/e/e7/Autonomous_Underwater_Vehicle_%28AUV%29_in_the_Flinders_Australian_Marine_Park.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/5/59/Galactic_Center_Variable_Stars_%2813149638943%29.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-digital-animation-of-blue-data-waves-1182-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-circuit-board-close-up-1185-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-futuristic-digital-data-network-1180-large.mp4',
   ],
   halong_bay: [
     'https://upload.wikimedia.org/wikipedia/commons/b/be/Ha_Long_Bay%2C_Vietnam_-_Dec_2024.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/0/0f/Waterfall-1013190%2C_Dingle_Peninsula%2C_Co._Kerry%2C_Ireland.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/f/fa/Waterfall_on_Falls_Creek%2C_south_of_Augusta%2C_Montana_%2852974925584%29.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-aerial-view-of-islands-in-the-ocean-1091-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-boat-sailing-on-a-calm-sea-at-sunset-1102-large.mp4',
   ],
   cave: [
-    'https://upload.wikimedia.org/wikipedia/commons/0/0f/Waterfall-1013190%2C_Dingle_Peninsula%2C_Co._Kerry%2C_Ireland.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/b/b1/Waterfall-1013185%2C_Dingle_Peninsula%2C_Co._Kerry%2C_Ireland.webm',
+    'https://assets.mixkit.co/videos/preview/mixkit-sunlight-entering-a-dark-cave-4120-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-rock-formations-in-a-cave-4122-large.mp4',
     'https://upload.wikimedia.org/wikipedia/commons/b/be/Ha_Long_Bay%2C_Vietnam_-_Dec_2024.webm',
-    'https://assets.mixkit.co/videos/preview/mixkit-waterfall-in-forest-2213-large.mp4',
   ],
   boats_water: [
     'https://upload.wikimedia.org/wikipedia/commons/b/be/Ha_Long_Bay%2C_Vietnam_-_Dec_2024.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/1/12/Swimming_with_the_sea_turtle_up_close_in_Moalboal_Cebu.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/b/b1/Waterfall-1013185%2C_Dingle_Peninsula%2C_Co._Kerry%2C_Ireland.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-boat-sailing-on-a-calm-sea-at-sunset-1102-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-river-flowing-through-the-forest-2218-large.mp4',
   ],
   desert_silkroad: [
     'https://upload.wikimedia.org/wikipedia/commons/f/fb/Trekking_with_Nomad.webm',
@@ -270,40 +264,34 @@ export const CURATED_OPEN_VIDEO_POOL: Record<string, string[]> = {
   coffee_agriculture: [
     'https://upload.wikimedia.org/wikipedia/commons/3/36/Morning_Espresso_Routine_-_Progress%2C_Results%2C_Observations_and_Miscellany.webm',
     'https://upload.wikimedia.org/wikipedia/commons/c/c7/Kaffeemaschine_2.0_Bohnen_r%C3%B6sten_mit_Wirbelschicht_ICEBE_B25.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/7/77/Kaffeemaschine_2.0_Zyklon_ICEBE_B25.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-pouring-coffee-into-a-cup-in-slow-motion-4812-large.mp4',
   ],
   rice_nature: [
     'https://upload.wikimedia.org/wikipedia/commons/d/d3/Drone_view_of_sagebrush_seeding_in_eastern_Oregon_%2833293399428%29.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/f/fa/Waterfall_on_Falls_Creek%2C_south_of_Augusta%2C_Montana_%2852974925584%29.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-green-meadow-with-wild-flowers-in-spring-4129-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-wheat-field-moving-in-the-wind-4125-large.mp4',
   ],
   wildlife: [
-    'https://upload.wikimedia.org/wikipedia/commons/2/2c/Pet_rabbit_eating_grass.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/1/12/Swimming_with_the_sea_turtle_up_close_in_Moalboal_Cebu.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/f/fa/Waterfall_on_Falls_Creek%2C_south_of_Augusta%2C_Montana_%2852974925584%29.webm',
+    'https://assets.mixkit.co/videos/preview/mixkit-lion-resting-in-the-savanna-4142-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-elephants-walking-in-the-savanna-4145-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-deer-in-a-green-forest-4138-large.mp4',
   ],
   birds: [
-    'https://upload.wikimedia.org/wikipedia/commons/d/d3/Drone_view_of_sagebrush_seeding_in_eastern_Oregon_%2833293399428%29.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/f/fa/Waterfall_on_Falls_Creek%2C_south_of_Augusta%2C_Montana_%2852974925584%29.webm',
     'https://assets.mixkit.co/videos/preview/mixkit-birds-flying-in-the-sky-at-sunset-2262-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-eagle-flying-in-the-sky-4152-large.mp4',
+    'https://upload.wikimedia.org/wikipedia/commons/d/d3/Drone_view_of_sagebrush_seeding_in_eastern_Oregon_%2833293399428%29.webm',
   ],
   insects_flowers: [
-    'https://upload.wikimedia.org/wikipedia/commons/2/2c/Pet_rabbit_eating_grass.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/f/fa/Waterfall_on_Falls_Creek%2C_south_of_Augusta%2C_Montana_%2852974925584%29.webm',
+    'https://assets.mixkit.co/videos/preview/mixkit-bee-on-a-yellow-flower-4161-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-butterfly-on-a-flower-in-nature-4163-large.mp4',
+    'https://assets.mixkit.co/videos/preview/mixkit-green-meadow-with-wild-flowers-in-spring-4129-large.mp4',
   ],
   forest_waterfall: [
     'https://upload.wikimedia.org/wikipedia/commons/0/0f/Waterfall-1013190%2C_Dingle_Peninsula%2C_Co._Kerry%2C_Ireland.webm',
     'https://upload.wikimedia.org/wikipedia/commons/b/b1/Waterfall-1013185%2C_Dingle_Peninsula%2C_Co._Kerry%2C_Ireland.webm',
     'https://upload.wikimedia.org/wikipedia/commons/f/fa/Waterfall_on_Falls_Creek%2C_south_of_Augusta%2C_Montana_%2852974925584%29.webm',
   ],
-  default_nature: [
-    'https://upload.wikimedia.org/wikipedia/commons/b/be/Ha_Long_Bay%2C_Vietnam_-_Dec_2024.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/0/0f/Waterfall-1013190%2C_Dingle_Peninsula%2C_Co._Kerry%2C_Ireland.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/f/fa/Waterfall_on_Falls_Creek%2C_south_of_Augusta%2C_Montana_%2852974925584%29.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/1/12/Swimming_with_the_sea_turtle_up_close_in_Moalboal_Cebu.webm',
-    'https://upload.wikimedia.org/wikipedia/commons/5/59/Galactic_Center_Variable_Stars_%2813149638943%29.webm',
-  ],
+  default_nature: [],
 };
 
 /**
@@ -353,7 +341,8 @@ export function sanitizeVideoSearchQuery(raw: string): string {
 
 /**
  * Translates a Vietnamese narration sentence (`narration_vi`) and optional English hints
- * into specialized English motion-video search queries + matched curated open CDN clips.
+ * into specialized English motion-video search queries + strictly matched curated clips.
+ * NEVER appends unrelated default_nature clips when a topic doesn't match!
  */
 export function translateNarrationToVideoQueries(
   narrationVi: string,
@@ -384,7 +373,7 @@ export function translateNarrationToVideoQueries(
 
   // 2. Also check English keywords if Vietnamese text was generic or already translated
   if (matchedCategory === 'default_nature' && lowerEn) {
-    if (lowerEn.includes('catfish') || lowerEn.includes('fish')) {
+    if (lowerEn.includes('catfish') || lowerEn.includes('fish swimming')) {
       matchedCategory = 'aquaculture_fish';
     } else if (lowerEn.includes('shrimp') || lowerEn.includes('aerator') || lowerEn.includes('pond')) {
       matchedCategory = 'aquaculture_shrimp';
@@ -414,7 +403,6 @@ export function translateNarrationToVideoQueries(
   const cleanWikiEn = sanitizeVideoSearchQuery(wikipediaTopicEn || '');
 
   if (cleanSearchEn && !queries.includes(cleanSearchEn)) {
-    // Keep specialized Vietnamese translation first if found, otherwise put cleanSearchEn first
     if (queries.length === 0) {
       queries.unshift(cleanSearchEn);
     } else {
@@ -434,13 +422,13 @@ export function translateNarrationToVideoQueries(
   }
 
   if (queries.length === 0) {
-    queries.push('nature landscape waterfall');
+    queries.push('educational science illustration');
   }
 
-  const curatedVideoUrls = [
-    ...(CURATED_OPEN_VIDEO_POOL[matchedCategory] || []),
-    ...CURATED_OPEN_VIDEO_POOL.default_nature,
-  ].filter((url, idx, arr) => arr.indexOf(url) === idx);
+  // ONLY include curated clips if they strictly belong to the matched category (never append unrelated default_nature clips!)
+  const curatedVideoUrls = (CURATED_OPEN_VIDEO_POOL[matchedCategory] || []).filter(
+    (url, idx, arr) => arr.indexOf(url) === idx
+  );
 
   return {
     primaryQueryEn: queries[0],

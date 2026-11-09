@@ -48,7 +48,7 @@ async function startServer() {
     res.json({ status: 'ok', version: '3.0.0', timestamp: new Date().toISOString() });
   });
 
-  // Tier 2 Multi-Chunk Vietnamese Neural TTS Stream Proxy with anti-CORS & caching
+  // Tier 2 Multi-Chunk Vietnamese Neural TTS Stream Proxy with multi-upstream anti-CORS & caching
   app.get('/api/tts', async (req, res) => {
     const text = req.query.text as string;
     if (!text) {
@@ -56,31 +56,44 @@ async function startServer() {
       return;
     }
 
-    try {
-      const trimmedText = text.slice(0, 200);
-      const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(trimmedText)}&tl=vi&client=gtx`;
+    const trimmedText = text.slice(0, 200);
+    const encoded = encodeURIComponent(trimmedText);
+    const ttsUpstreams = [
+      `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encoded}&tl=vi&client=gtx`,
+      `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=vi&client=tw-ob`,
+      `https://translate.google.com.vn/translate_tts?ie=UTF-8&q=${encoded}&tl=vi&client=gtx`,
+    ];
 
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          Referer: 'https://translate.google.com/',
-        },
-      });
+    for (const url of ttsUpstreams) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            Referer: 'https://translate.google.com/',
+          },
+        });
+        clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        res.status(response.status).json({ error: 'TTS upstream error' });
-        return;
+        if (response.ok) {
+          const buffer = await response.arrayBuffer();
+          if (buffer && buffer.byteLength > 200) {
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.send(Buffer.from(buffer));
+            return;
+          }
+        }
+      } catch {
+        clearTimeout(timeoutId);
       }
-
-      const buffer = await response.arrayBuffer();
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.send(Buffer.from(buffer));
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'TTS request failed' });
     }
+
+    res.status(502).json({ error: 'All TTS upstreams failed' });
   });
 
   // Tier 1 Human-Like Neural Voice Endpoint (Gemini 2.5 Native Audio / OpenAI TTS / ElevenLabs / Neural Fallback)
