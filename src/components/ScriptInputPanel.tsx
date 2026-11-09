@@ -7,14 +7,21 @@ import {
   GraduationCap,
   Rocket,
   Sliders,
+  Mic,
+  Music,
+  Compass,
 } from 'lucide-react';
-import { SubjectOption } from '../types';
+import { SubjectOption, VoiceSettings, VoiceIdOption } from '../types';
 
 interface ScriptInputPanelProps {
   lessonTitle: string;
   onLessonTitleChange: (title: string) => void;
   subject: SubjectOption;
   onSubjectChange: (subject: SubjectOption) => void;
+  directorInstructions: string;
+  onDirectorInstructionsChange: (instructions: string) => void;
+  voiceSettings: VoiceSettings;
+  onVoiceSettingsChange: (updated: Partial<VoiceSettings>) => void;
   scriptText: string;
   onScriptTextChange: (text: string) => void;
   targetDurationSec: number;
@@ -36,6 +43,7 @@ const DIRECTOR_DURATION_OPTIONS = [
   { label: '1 Phút (~3 cảnh)', value: 60 },
   { label: '2 Phút (~5 cảnh)', value: 120 },
   { label: '3 Phút (~7-8 cảnh)', value: 180 },
+  { label: '5 Phút (Tối đa)', value: 300 },
 ];
 
 export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
@@ -43,6 +51,10 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
   onLessonTitleChange,
   subject,
   onSubjectChange,
+  directorInstructions,
+  onDirectorInstructionsChange,
+  voiceSettings,
+  onVoiceSettingsChange,
   scriptText,
   onScriptTextChange,
   targetDurationSec,
@@ -55,7 +67,9 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   const wordCount = scriptText.trim() ? scriptText.trim().split(/\s+/).length : 0;
-  const canGenerate = Boolean(lessonTitle.trim() || scriptText.trim());
+  const canGenerate = Boolean(
+    lessonTitle.trim() || scriptText.trim() || directorInstructions.trim()
+  );
 
   const handleReset = () => {
     onResetVideo();
@@ -80,7 +94,7 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
         <div className="flex items-center gap-2">
           <Wand2 className="w-4 h-4 text-amber-400" />
           <h2 className="text-sm font-bold uppercase tracking-wider text-slate-100">
-            Đạo Diễn Tự Động Khôn Ngoan (1-Chạm)
+            Đạo Diễn Tự Động V3.0 (Scene-Graph & Neural Voice)
           </h2>
         </div>
 
@@ -88,24 +102,24 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
           type="button"
           onClick={handleReset}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-rose-950/50 border border-slate-700 hover:border-rose-500/50 text-slate-200 hover:text-rose-300 text-xs font-semibold transition"
-          title="Xóa sạch dữ liệu cũ, dừng toàn bộ video/audio ngầm để tạo bài học mới"
+          title="Dừng ngay mọi AudioBufferSourceNode, giải phóng toàn bộ <video> và xóa sạch bộ nhớ đệm"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>🔄 Tạo Mới Video</span>
         </button>
       </div>
 
-      {/* GIAO DIỆN NHẬP LIỆU 1-CHẠM (QUICK DIRECTOR BAR) */}
+      {/* PHẦN 1: GIAO DIỆN NHẬP LIỆU 1-CHẠM & CHỈ DẪN ĐẠO DIỄN */}
       <div className="p-4 rounded-xl bg-slate-950/85 border border-amber-500/30 space-y-3.5 shadow-inner">
-        {/* Ô nhập: Tên bài học / Chủ đề */}
+        {/* 1. Ô nhập: Tên bài học / Chủ đề */}
         <div>
           <label
             htmlFor="director-topic-input"
             className="block text-xs font-bold text-amber-300 mb-1.5 flex items-center justify-between"
           >
-            <span>1. Tên bài học / Chủ đề:</span>
+            <span>1. Tên bài học / Chủ đề bài giảng:</span>
             <span className="text-[10px] font-normal text-slate-400">
-              Nhập chủ đề mới để tạo kịch bản & dựng video
+              AI tự sinh kịch bản 4 phần sư phạm + nhịp hình ảnh (Visual Beats)
             </span>
           </label>
           <input
@@ -119,9 +133,8 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
           />
         </div>
 
-        {/* Hàng Dropdown Môn học & Thời lượng */}
+        {/* 2. Hàng Dropdown Môn học & Thời lượng */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {/* Dropdown Môn học */}
           <div>
             <label
               htmlFor="director-subject-select"
@@ -145,7 +158,6 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
             </select>
           </div>
 
-          {/* Dropdown Thời lượng */}
           <div>
             <label
               htmlFor="director-duration-select"
@@ -174,6 +186,103 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
           </div>
         </div>
 
+        {/* 3. Ô nhập: 🎯 Chỉ dẫn Đạo diễn & Yêu cầu Hình ảnh cụ thể (Tùy chọn) */}
+        <div>
+          <label
+            htmlFor="director-instructions-input"
+            className="block text-xs font-bold text-cyan-300 mb-1.5 flex items-center gap-1.5"
+          >
+            <Compass className="w-3.5 h-3.5 text-cyan-400" />
+            <span>🎯 Chỉ dẫn Đạo diễn & Yêu cầu Hình ảnh cụ thể (Tùy chọn):</span>
+          </label>
+          <textarea
+            id="director-instructions-input"
+            value={directorInstructions}
+            onChange={(e) => onDirectorInstructionsChange(e.target.value)}
+            rows={2}
+            placeholder="VD: Phần 1 bối cảnh ao nuôi ĐBSCL; Phần 2 so sánh nuôi quảng canh và thâm canh có quạt nước; hiện công thức DO >= 5 mg/l góc phải..."
+            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition resize-y"
+          />
+        </div>
+
+        {/* 4. Bộ chọn Giọng Đọc AI Người Thật (Human-Like Neural Voice + Studio Mastering) */}
+        <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <label
+              htmlFor="director-voice-select"
+              className="text-xs font-bold text-emerald-300 flex items-center gap-1.5"
+            >
+              <Mic className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Bộ chọn Giọng Đọc AI Người Thật (Studio Mastering):</span>
+            </label>
+            <span className="text-[10px] font-mono text-emerald-400/90">
+              EQ +3dB@180Hz • Compressor
+            </span>
+          </div>
+
+          <select
+            id="director-voice-select"
+            value={voiceSettings.voiceId}
+            onChange={(e) =>
+              onVoiceSettingsChange({ voiceId: e.target.value as VoiceIdOption })
+            }
+            aria-label="Bộ chọn Giọng Đọc AI Người Thật"
+            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-emerald-300 focus:outline-none focus:border-emerald-500 transition"
+          >
+            <option value="female-neural">
+              🎙️ Giọng Nữ Truyền Cảm - Cô Giáo Miền Nam/Bắc (Neural AI)
+            </option>
+            <option value="male-neural">
+              🎙️ Giọng Nam Ấm Áp - Thầy Giáo Chuyên Gia (Neural AI)
+            </option>
+          </select>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 items-center">
+            {/* Thanh trượt Tốc độ đọc (0.85x -> 1.15x) */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-slate-300 font-medium whitespace-nowrap">
+                Tốc độ đọc:{' '}
+                <strong className="text-amber-300 font-mono">
+                  {voiceSettings.speed.toFixed(2)}x
+                </strong>
+              </span>
+              <input
+                type="range"
+                min={0.85}
+                max={1.15}
+                step={0.05}
+                value={voiceSettings.speed}
+                aria-label="Tốc độ đọc giọng AI"
+                onChange={(e) =>
+                  onVoiceSettingsChange({ speed: parseFloat(e.target.value) })
+                }
+                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-400"
+              />
+            </div>
+
+            {/* Nút bật/tắt Nhạc nền giáo dục nhẹ nhàng (Background Ambient Audio Ducking -18dB) */}
+            <button
+              type="button"
+              onClick={() =>
+                onVoiceSettingsChange({ bgmEnabled: !voiceSettings.bgmEnabled })
+              }
+              className={`px-3 py-1.5 rounded-xl text-[11px] font-semibold border flex items-center justify-center gap-1.5 transition ${
+                voiceSettings.bgmEnabled
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+              title="Bật/Tắt nhạc nền Ambient giáo dục tự động hạ nhỏ âm lượng (-18dB Audio Ducking) khi giáo viên giảng bài"
+            >
+              <Music className="w-3.5 h-3.5" />
+              <span>
+                {voiceSettings.bgmEnabled
+                  ? 'Nhạc nền Giáo dục: BẬT (-18dB Ducking)'
+                  : 'Nhạc nền Giáo dục: TẮT (100% Voice)'}
+              </span>
+            </button>
+          </div>
+        </div>
+
         {/* Nút Hành Động 1-Chạm: 🚀 TỰ ĐỘNG TẠO KỊCH BẢN & DỰNG VIDEO CHUYỂN ĐỘNG */}
         <button
           type="button"
@@ -185,7 +294,7 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
             <>
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
               <span className="truncate">
-                {analysisStatus || 'Đang tự động biên soạn kịch bản 4 phần & nạp video...'}
+                {analysisStatus || 'Đang biên soạn kịch bản Scene-Graph & nạp Multi-Beat Video...'}
               </span>
             </>
           ) : (
@@ -218,14 +327,14 @@ export const ScriptInputPanel: React.FC<ScriptInputPanelProps> = ({
       {/* Khung ghi chú / kịch bản chi tiết (Tùy chọn) */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>Nội dung kịch bản hoặc chỉ dẫn chi tiết (Tùy chọn):</span>
+          <span>Nội dung kịch bản chi tiết (Tùy chọn):</span>
           <span className="text-amber-400 font-semibold">{wordCount} từ</span>
         </div>
 
         <textarea
           value={scriptText}
           onChange={(e) => onScriptTextChange(e.target.value)}
-          placeholder="Nhập nội dung kịch bản hoặc để trống để AI tự biên soạn từ Tên bài học ở trên..."
+          placeholder="Nhập nội dung kịch bản hoặc để trống để AI tự biên soạn từ Tên bài học & Chỉ dẫn Đạo diễn ở trên..."
           rows={3}
           className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs leading-relaxed text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition resize-y font-sans"
         />

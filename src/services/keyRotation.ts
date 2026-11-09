@@ -1,7 +1,8 @@
-import { KeyStatus, KeyRotationLog } from '../types';
+import { KeyStatus, KeyRotationLog, ExternalApiKeysConfig } from '../types';
 
 const STORAGE_KEY = 'vietvideo_gemini_keys';
 const STORAGE_LOGS_KEY = 'vietvideo_gemini_key_logs';
+const STORAGE_EXTERNAL_KEYS = 'vietvideo_external_api_keys';
 
 type Listener = () => void;
 
@@ -11,9 +12,28 @@ class KeyRotationEngine {
   private keyStatuses: Map<string, KeyStatus> = new Map();
   private logs: KeyRotationLog[] = [];
   private listeners: Set<Listener> = new Set();
+  private externalKeys: ExternalApiKeysConfig = {
+    pexelsApiKey: '',
+    pixabayApiKey: '',
+    elevenLabsApiKey: '',
+    openaiTtsApiKey: '',
+    fptAiApiKey: '',
+  };
 
   constructor() {
     this.loadFromStorage();
+  }
+
+  public getExternalKeys(): ExternalApiKeysConfig {
+    return { ...this.externalKeys };
+  }
+
+  public setExternalKeys(updated: Partial<ExternalApiKeysConfig>): void {
+    this.externalKeys = {
+      ...this.externalKeys,
+      ...updated,
+    };
+    this.notify();
   }
 
   public subscribe(listener: Listener): () => void {
@@ -291,6 +311,10 @@ class KeyRotationEngine {
         STORAGE_LOGS_KEY,
         JSON.stringify(this.logs.slice(0, 30))
       );
+      localStorage.setItem(
+        STORAGE_EXTERNAL_KEYS,
+        JSON.stringify(this.externalKeys)
+      );
     } catch (e) {
       console.warn('Unable to save to localStorage:', e);
     }
@@ -320,6 +344,17 @@ class KeyRotationEngine {
         const parsed = JSON.parse(savedLogs);
         if (Array.isArray(parsed)) {
           this.logs = parsed;
+        }
+      }
+
+      const savedExternal = localStorage.getItem(STORAGE_EXTERNAL_KEYS);
+      if (savedExternal) {
+        const parsed = JSON.parse(savedExternal);
+        if (parsed && typeof parsed === 'object') {
+          this.externalKeys = {
+            ...this.externalKeys,
+            ...parsed,
+          };
         }
       }
     } catch (e) {

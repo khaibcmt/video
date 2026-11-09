@@ -9,9 +9,11 @@ import {
   Info,
   Check,
   X,
+  Video,
+  Mic,
 } from 'lucide-react';
 import { keyRotationEngine } from '../services/keyRotation';
-import { KeyStatus, KeyRotationLog } from '../types';
+import { KeyStatus, KeyRotationLog, ExternalApiKeysConfig } from '../types';
 
 interface KeyManagerModalProps {
   isOpen: boolean;
@@ -22,6 +24,13 @@ export const KeyManagerModal: React.FC<KeyManagerModalProps> = ({ isOpen, onClos
   const [rawText, setRawText] = useState('');
   const [keysList, setKeysList] = useState<KeyStatus[]>([]);
   const [logs, setLogs] = useState<KeyRotationLog[]>([]);
+  const [externalKeys, setExternalKeys] = useState<ExternalApiKeysConfig>({
+    pexelsApiKey: '',
+    pixabayApiKey: '',
+    elevenLabsApiKey: '',
+    openaiTtsApiKey: '',
+    fptAiApiKey: '',
+  });
   const [copiedNotification, setCopiedNotification] = useState(false);
 
   useEffect(() => {
@@ -29,11 +38,13 @@ export const KeyManagerModal: React.FC<KeyManagerModalProps> = ({ isOpen, onClos
       setRawText(keyRotationEngine.getRawKeysText());
       setKeysList(keyRotationEngine.getAllKeys());
       setLogs(keyRotationEngine.getLogs());
+      setExternalKeys(keyRotationEngine.getExternalKeys());
     }
 
     const unsubscribe = keyRotationEngine.subscribe(() => {
       setKeysList(keyRotationEngine.getAllKeys());
       setLogs(keyRotationEngine.getLogs());
+      setExternalKeys(keyRotationEngine.getExternalKeys());
     });
 
     return unsubscribe;
@@ -43,6 +54,7 @@ export const KeyManagerModal: React.FC<KeyManagerModalProps> = ({ isOpen, onClos
 
   const handleSave = () => {
     keyRotationEngine.setKeysFromRawText(rawText);
+    keyRotationEngine.setExternalKeys(externalKeys);
     setCopiedNotification(true);
     setTimeout(() => setCopiedNotification(false), 2000);
   };
@@ -66,10 +78,10 @@ export const KeyManagerModal: React.FC<KeyManagerModalProps> = ({ isOpen, onClos
             </div>
             <div>
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                Quản Lý Gemini API Keys & Xoay Vòng (Rotation Engine)
+                Bảng Cấu Hình API Key Thông Minh (V3.0 Multi-Engine)
               </h2>
               <p className="text-xs text-slate-400">
-                Tự động luân phiên Round-Robin và tự động chuyển đổi khi gặp lỗi 429 hoặc 403
+                Lưu trữ an toàn trên LocalStorage • Dùng chung cho Kịch bản, Hình ảnh, Video MP4 & Giọng đọc Neural AI
               </p>
             </div>
           </div>
@@ -86,7 +98,7 @@ export const KeyManagerModal: React.FC<KeyManagerModalProps> = ({ isOpen, onClos
           {/* Status summary pills */}
           <div className="grid grid-cols-4 gap-3">
             <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 text-center">
-              <span className="text-xs text-slate-400 block mb-1">Tổng Số Key</span>
+              <span className="text-xs text-slate-400 block mb-1">Tổng Gemini Key</span>
               <span className="text-xl font-bold text-white">{keysList.length}</span>
             </div>
             <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-center">
@@ -109,12 +121,12 @@ export const KeyManagerModal: React.FC<KeyManagerModalProps> = ({ isOpen, onClos
             </div>
           </div>
 
-          {/* Textarea Input */}
+          {/* 1. Gemini API Keys Textarea Input */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                <span>Danh sách API Keys (Mỗi dòng 1 key)</span>
-                <span className="text-slate-500 font-normal lowercase">(Tự động lưu vào LocalStorage)</span>
+              <label className="text-xs font-semibold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5" />
+                <span>1. Gemini API Keys (Dùng cho Kịch Bản Sư Phạm, Ảnh HD AI & Gemini Native Voice)</span>
               </label>
               <span className="text-xs text-amber-400/90 font-medium">
                 {rawText.split('\n').filter((l) => l.trim()).length} keys được phát hiện
@@ -123,101 +135,144 @@ export const KeyManagerModal: React.FC<KeyManagerModalProps> = ({ isOpen, onClos
             <textarea
               value={rawText}
               onChange={(e) => setRawText(e.target.value)}
-              placeholder="AIzaSyA... (Dán key 1)&#10;AIzaSyB... (Dán key 2)&#10;AIzaSyC... (Dán key 3)"
-              rows={4}
-              className="w-full bg-slate-950/90 border border-slate-700 rounded-xl px-4 py-3 font-mono text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition resize-y"
+              placeholder="AIzaSyA... (Dán Gemini key 1)&#10;AIzaSyB... (Dán Gemini key 2 - xoay vòng tự động)"
+              rows={3}
+              className="w-full bg-slate-950/90 border border-slate-700 rounded-xl px-4 py-2.5 font-mono text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition resize-y"
             />
-            <div className="flex items-center justify-between pt-1">
-              <p className="text-xs text-slate-400 flex items-center gap-1">
-                <Info className="w-3.5 h-3.5 text-slate-500" />
-                Nếu không nhập key tùy chỉnh, hệ thống sẽ tự động dùng key môi trường AI Studio.
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleResetStatuses}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 flex items-center gap-1.5 transition"
-                >
-                  <RotateCw className="w-3.5 h-3.5" />
-                  Đặt lại trạng thái
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition shadow-lg shadow-amber-500/20"
-                >
-                  {copiedNotification ? <Check className="w-3.5 h-3.5" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                  {copiedNotification ? 'Đã lưu!' : 'Lưu Danh Sách'}
-                </button>
+          </div>
+
+          {/* 2. Pexels & Pixabay Video API Keys */}
+          <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-cyan-300">
+              <Video className="w-4 h-4 text-cyan-400" />
+              <span>2. Kho Video MP4 Chất Lượng Cao (Pexels / Pixabay API Key — Tùy chọn)</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 block mb-1">
+                  Pexels Video API Key:
+                </label>
+                <input
+                  type="password"
+                  value={externalKeys.pexelsApiKey}
+                  onChange={(e) =>
+                    setExternalKeys({ ...externalKeys, pexelsApiKey: e.target.value })
+                  }
+                  placeholder="Nhập Pexels API Key (nếu có)..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 block mb-1">
+                  Pixabay Video API Key:
+                </label>
+                <input
+                  type="password"
+                  value={externalKeys.pixabayApiKey}
+                  onChange={(e) =>
+                    setExternalKeys({ ...externalKeys, pixabayApiKey: e.target.value })
+                  }
+                  placeholder="Nhập Pixabay API Key (nếu có)..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+                />
               </div>
             </div>
           </div>
 
-          {/* Key list table */}
-          {keysList.length > 0 && (
-            <div className="space-y-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-300 block">
-                Trạng thái chi tiết từng Key
-              </span>
-              <div className="bg-slate-950/60 border border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-800/80 max-h-48 overflow-y-auto">
-                {keysList.map((k, idx) => (
-                  <div
-                    key={k.key}
-                    className="flex items-center justify-between px-4 py-2.5 text-xs hover:bg-slate-900/50 transition"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-slate-500 font-mono w-5">#{idx + 1}</span>
-                      <span className="font-mono text-slate-200">{k.masked}</span>
-                      <span className="text-slate-400">({k.requestsCount} lượt gọi)</span>
-                    </div>
-                    <div>
-                      {k.status === 'active' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                          Đang hoạt động
-                        </span>
-                      )}
-                      {k.status === 'exhausted' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                          <AlertTriangle className="w-3 h-3" />
-                          Hết hạn ngạch (429)
-                        </span>
-                      )}
-                      {k.status === 'invalid' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                          <XCircle className="w-3 h-3" />
-                          Không hợp lệ (403)
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
+          {/* 3. Optional Neural TTS API Keys (ElevenLabs / FPT.AI / OpenAI TTS) */}
+          <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-300">
+              <Mic className="w-4 h-4 text-emerald-400" />
+              <span>3. Giọng Đọc Neural TTS Mở Rộng (FPT.AI / OpenAI / ElevenLabs — Tùy chọn)</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 block mb-1">
+                  FPT.AI TTS API Key:
+                </label>
+                <input
+                  type="password"
+                  value={externalKeys.fptAiApiKey}
+                  onChange={(e) =>
+                    setExternalKeys({ ...externalKeys, fptAiApiKey: e.target.value })
+                  }
+                  placeholder="FPT.AI Key (Ban Mai / Lê Minh)..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 block mb-1">
+                  OpenAI TTS API Key:
+                </label>
+                <input
+                  type="password"
+                  value={externalKeys.openaiTtsApiKey}
+                  onChange={(e) =>
+                    setExternalKeys({ ...externalKeys, openaiTtsApiKey: e.target.value })
+                  }
+                  placeholder="sk-... (gpt-4o-mini-tts / tts-1-hd)"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 block mb-1">
+                  ElevenLabs API Key:
+                </label>
+                <input
+                  type="password"
+                  value={externalKeys.elevenLabsApiKey}
+                  onChange={(e) =>
+                    setExternalKeys({ ...externalKeys, elevenLabsApiKey: e.target.value })
+                  }
+                  placeholder="xi-api-key (Multilingual v2)..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500"
+                />
               </div>
             </div>
-          )}
+          </div>
+
+          {/* Save & Reset Action Row */}
+          <div className="flex items-center justify-between pt-1">
+            <p className="text-xs text-slate-400 flex items-center gap-1">
+              <Info className="w-3.5 h-3.5 text-slate-500" />
+              Nếu để trống, hệ thống tự động dùng Gemini AI Studio Key & luồng Neural TTS miễn phí tích hợp sẵn.
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetStatuses}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 flex items-center gap-1.5 transition"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+                Đặt lại trạng thái
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition shadow-lg shadow-amber-500/20"
+              >
+                {copiedNotification ? <Check className="w-3.5 h-3.5" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                {copiedNotification ? 'Đã lưu cấu hình!' : 'Lưu Cấu Hình Keys'}
+              </button>
+            </div>
+          </div>
 
           {/* Live Failover & Rotation Event Log */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-300 block">
-                Nhật ký chuyển đổi & Xoay vòng (Rotation Logs)
-              </span>
-              {logs.length > 0 && (
+          {logs.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-300 block">
+                  Nhật ký chuyển đổi & Xoay vòng (Rotation Logs)
+                </span>
                 <button
                   onClick={() => keyRotationEngine.clearLogs()}
                   className="text-[11px] text-slate-400 hover:text-slate-200 transition"
                 >
                   Xóa lịch sử
                 </button>
-              )}
-            </div>
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[11px] max-h-36 overflow-y-auto space-y-1.5">
-              {logs.length === 0 ? (
-                <div className="text-slate-500 italic py-2 text-center">
-                  Chưa có sự kiện chuyển đổi key nào được ghi nhận.
-                </div>
-              ) : (
-                logs.map((log) => (
+              </div>
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[11px] max-h-28 overflow-y-auto space-y-1.5">
+                {logs.map((log) => (
                   <div key={log.id} className="flex items-start gap-2 leading-relaxed">
                     <span className="text-slate-500 whitespace-nowrap">
                       {new Date(log.timestamp).toLocaleTimeString()}
@@ -236,16 +291,16 @@ export const KeyManagerModal: React.FC<KeyManagerModalProps> = ({ isOpen, onClos
                       {log.message}
                     </span>
                   </div>
-                ))
-              )}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="px-6 py-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between">
           <div className="text-xs text-slate-400">
-            Hệ thống tự động lưu trữ cấu hình an toàn trên trình duyệt của bạn.
+            Cấu hình được lưu tự động vào LocalStorage trên trình duyệt.
           </div>
           <button
             onClick={onClose}

@@ -12,16 +12,43 @@ const __dirname = path.dirname(__filename);
 const isProd = process.env.NODE_ENV === 'production';
 const PORT = Number(process.env.PORT) || 3000;
 
+/**
+ * Wraps raw 16-bit PCM mono audio (e.g. 24000 Hz from Gemini Native TTS) in a 44-byte RIFF WAV header
+ * so standard browser AudioContext.decodeAudioData() can decode it with 100% compatibility.
+ */
+function pcm16ToWavBuffer(pcmBuffer: Buffer, sampleRate: number = 24000, numChannels: number = 1): Buffer {
+  const byteRate = sampleRate * numChannels * 2;
+  const blockAlign = numChannels * 2;
+  const dataSize = pcmBuffer.length;
+  const header = Buffer.alloc(44);
+
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16); // Subchunk1Size (16 for PCM)
+  header.writeUInt16LE(1, 20);  // AudioFormat (1 = PCM)
+  header.writeUInt16LE(numChannels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(16, 34); // BitsPerSample
+  header.write('data', 36);
+  header.writeUInt32LE(dataSize, 40);
+
+  return Buffer.concat([header, pcmBuffer]);
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '20mb' }));
 
   // Health check
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({ status: 'ok', version: '3.0.0', timestamp: new Date().toISOString() });
   });
 
-  // Google Translate Vietnamese TTS Proxy with anti-CORS & caching
+  // Tier 2 Multi-Chunk Vietnamese Neural TTS Stream Proxy with anti-CORS & caching
   app.get('/api/tts', async (req, res) => {
     const text = req.query.text as string;
     if (!text) {
@@ -30,13 +57,14 @@ async function startServer() {
     }
 
     try {
-      const trimmedText = text.slice(0, 200); // Google translate tts chunk limit
+      const trimmedText = text.slice(0, 200);
       const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(trimmedText)}&tl=vi&client=gtx`;
-      
+
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': 'https://translate.google.com/',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          Referer: 'https://translate.google.com/',
         },
       });
 
@@ -55,6 +83,159 @@ async function startServer() {
     }
   });
 
+  // Tier 1 Human-Like Neural Voice Endpoint (Gemini 2.5 Native Audio / OpenAI TTS / ElevenLabs / Neural Fallback)
+  app.post('/api/tts/neural', async (req, res) => {
+    const {
+      text,
+      voiceId = 'female-neural',
+      apiKey,
+      openaiTtsApiKey,
+      elevenLabsApiKey,
+      useGeminiNative = false,
+    } = req.body || {};
+
+    if (!text || typeof text !== 'string') {
+      res.status(400).json({ error: 'Missing text for neural TTS' });
+      return;
+    }
+
+    // 1. Optional OpenAI Neural TTS (if teacher configured OpenAI TTS Key)
+    if (openaiTtsApiKey && String(openaiTtsApiKey).trim().startsWith('sk-')) {
+      try {
+        const oaRes = await fetch('https://api.openai.com/v1/audio/speech', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${String(openaiTtsApiKey).trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'tts-1',
+            voice: voiceId === 'male-neural' ? 'onyx' : 'nova',
+            input: text.slice(0, 1000),
+            response_format: 'mp3',
+          }),
+        });
+        if (oaRes.ok) {
+          const buf = Buffer.from(await oaRes.arrayBuffer());
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.send(buf);
+          return;
+        }
+      } catch {
+        // Fall through to next neural provider
+      }
+    }
+
+    // 2. Optional ElevenLabs Multilingual v2 Neural TTS (if teacher configured ElevenLabs Key)
+    if (elevenLabsApiKey && String(elevenLabsApiKey).trim().length > 10) {
+      try {
+        const elVoice =
+          voiceId === 'male-neural'
+            ? 'pNInz6obpgDQGcFmaJgB' // Adam (Warm male)
+            : '21m00Tcm4TlvDq8ikWAM'; // Rachel (Expressive female)
+        const elRes = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${elVoice}`,
+          {
+            method: 'POST',
+            headers: {
+              'xi-api-key': String(elevenLabsApiKey).trim(),
+              'Content-Type': 'application/json',
+              Accept: 'audio/mpeg',
+            },
+            body: JSON.stringify({
+              text: text.slice(0, 1000),
+              model_id: 'eleven_multilingual_v2',
+            }),
+          }
+        );
+        if (elRes.ok) {
+          const buf = Buffer.from(await elRes.arrayBuffer());
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.send(buf);
+          return;
+        }
+      } catch {
+        // Fall through to Gemini Native TTS / Neural stream
+      }
+    }
+
+    // 3. Gemini 2.5 Flash Native Audio TTS (when explicitly requested & API key present)
+    const effectiveGeminiKey = apiKey || process.env.GEMINI_API_KEY;
+    if (useGeminiNative && effectiveGeminiKey) {
+      try {
+        const ai = new GoogleGenAI({
+          apiKey: effectiveGeminiKey,
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+        });
+        const geminiVoiceName = voiceId === 'male-neural' ? 'Puck' : 'Kore';
+        const ttsPrompt = `Hãy đọc đoạn văn bản bài giảng sau bằng tiếng Việt chuẩn, giọng giáo viên ${
+          voiceId === 'male-neural' ? 'nam ấm áp, chững chạc' : 'nữ truyền cảm, dịu dàng'
+        }, ngắt nghỉ tự nhiên như người thật, nhấn giọng ở các thuật ngữ quan trọng: "${text}"`;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-preview-tts',
+          contents: [{ parts: [{ text: ttsPrompt }] }],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: geminiVoiceName },
+              },
+            },
+          } as any,
+        });
+
+        for (const part of response.candidates?.[0]?.content?.parts ?? []) {
+          if (part.inlineData?.data) {
+            const rawBuf = Buffer.from(part.inlineData.data, 'base64');
+            const mime = (part.inlineData.mimeType || '').toLowerCase();
+            if (mime.includes('pcm') || mime.includes('l16')) {
+              const wavBuf = pcm16ToWavBuffer(rawBuf, 24000, 1);
+              res.setHeader('Content-Type', 'audio/wav');
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.send(wavBuf);
+              return;
+            }
+            res.setHeader('Content-Type', part.inlineData.mimeType || 'audio/wav');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.send(rawBuf);
+            return;
+          }
+        }
+      } catch {
+        // Fall through to fast multi-chunk neural stream
+      }
+    }
+
+    // 4. Fast Vietnamese Neural TTS stream fallback
+    try {
+      const trimmedText = text.slice(0, 190);
+      const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
+        trimmedText
+      )}&tl=vi&client=gtx`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          Referer: 'https://translate.google.com/',
+        },
+      });
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.send(Buffer.from(buffer));
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
+    res.status(502).json({ error: 'Neural TTS generation unavailable' });
+  });
+
   // Image Proxy for Wikimedia or external images if CORS blocked
   app.get('/api/proxy-image', async (req, res) => {
     const imageUrl = req.query.url as string;
@@ -66,7 +247,7 @@ async function startServer() {
     try {
       const response = await fetch(imageUrl, {
         headers: {
-          'User-Agent': 'VietVideoStudio/1.0 (Educational Video Engine; contact@example.com)',
+          'User-Agent': 'VietVideoStudio/3.0 (Educational Video Engine; contact@example.com)',
         },
       });
 
@@ -98,7 +279,7 @@ async function startServer() {
     try {
       const response = await fetch(videoUrl, {
         headers: {
-          'User-Agent': 'VietVideoStudio/2.0 (Pro Documentary Video Engine; contact@example.com)',
+          'User-Agent': 'VietVideoStudio/3.0 (Pro Documentary Video Engine; contact@example.com)',
         },
       });
 
@@ -119,7 +300,7 @@ async function startServer() {
     }
   });
 
-  // Gemini API Endpoint with Multi-Key Support and 4-Part Pedagogical AI Director structured JSON
+  // V3.0 Gemini Scene-Graph Endpoint: 4-Part Pedagogical Structure + Expressive Storytelling + Multi-Beat Visuals
   app.post('/api/gemini/generate', async (req, res) => {
     const {
       apiKey,
@@ -127,6 +308,7 @@ async function startServer() {
       thinkingLevel,
       topicTitle = '',
       subject = 'Sinh học',
+      directorInstructions = '',
       prompt = '',
       targetDurationSec = 120,
     } = req.body;
@@ -160,84 +342,92 @@ async function startServer() {
 
       const durationSec = Math.max(30, Math.min(300, Number(targetDurationSec) || 120));
       const targetSceneCount = durationSec <= 75 ? 3 : durationSec <= 150 ? 5 : 7;
-      const targetMin = Math.floor(durationSec / 60);
-      const targetSecRemainder = durationSec % 60;
-      const durationDisplay = `${targetMin > 0 ? `${targetMin} phút ` : ''}${targetSecRemainder > 0 ? `${targetSecRemainder} giây` : ''}`;
 
-      const systemInstruction = `Bạn là Đạo Diễn Sư Phạm AI Tự Động (Autonomous Pedagogical Video Director) chuyên nghiệp cho môn ${subject}.
-Nhiệm vụ của bạn là nhận Tên bài học / Chủ đề (và kịch bản gợi ý nếu có) từ người dùng và tự động biên soạn kịch bản bài giảng video chuyển động theo CẤU TRÚC 4 PHẦN SƯ PHẠM CHUẨN gồm đúng ${targetSceneCount} phân cảnh (scenes) cho tổng thời lượng ${durationSec} giây (~${durationDisplay}):
-- Phần 1: Mở đầu & Đặt vấn đề (Khởi động hấp dẫn)
-- Phần 2: Khám phá Kiến thức Trọng tâm 1 (Phân loại / Bản chất khoa học)
-- Phần 3: Khám phá Kiến thức Trọng tâm 2 (Quy trình / Cơ chế / Phương thức kỹ thuật)
-- Phần 4: Ứng dụng Thực tiễn & Tổng kết Bài học
+      const systemInstruction = `Bạn là Đạo Diễn Sư Phạm AI Đa Phương Thức Thế Hệ V3.0 (Autonomous Pedagogical Scene-Graph Director) cho môn ${subject}.
+Nhiệm vụ của bạn là biên soạn kịch bản bài giảng video chuyển động thực tế gồm đúng ${targetSceneCount} phân cảnh (scenes) cho tổng thời lượng ${durationSec} giây, tuân thủ CẤU TRÚC 4 PHẦN SƯ PHẠM CHUẨN:
+- Phần 1: Mở đầu & Đặt vấn đề
+- Phần 2: Kiến thức trọng tâm 1
+- Phần 3: Kiến thức trọng tâm 2
+- Phần 4: Ứng dụng thực tiễn & Tổng kết
 
-CÁC QUY TẮC BẮT BUỘC TUÂN THỦ:
-1. KHỚP ĐỘ DÀI MỤC TIÊU & NHỊP ĐỌC SƯ PHẠM LƯU LOÁT:
-   - Tổng độ dài video yêu cầu là: ${durationSec} GIÂY (~${targetSceneCount} cảnh).
-   - Mỗi phân cảnh có 1-2 câu giảng bài mạch lạc, giàu hình ảnh thực tế (khoảng 22 đến 38 từ mỗi cảnh) để giọng đọc thuyết minh tiếng Việt phát âm trôi chảy, tự nhiên.
+QUY TẮC BẮT BUỘC V3.0:
+1. PHÂN TÍCH SÂU "CHỈ DẪN ĐẠO DIỄN":
+   - Nếu giáo viên cung cấp "Chỉ dẫn Đạo diễn & Yêu cầu Hình ảnh cụ thể", BẮT BUỘC cài đặt chính xác từng bối cảnh, phép so sánh và công thức (ví dụ: DO >= 5 mg/l, bối cảnh ao nuôi ĐBSCL...) vào đúng các phân cảnh và nhãn 'pedagogical_badge' tương ứng.
 
-2. LƯỢC BỎ TỪ KHÔNG LIÊN QUAN ĐẾN LỜI THOẠI:
-   - Trong 'narration_vi': TUYỆT ĐỐI LOẠI BỎ mọi ghi chú kỹ thuật, hướng dẫn đạo diễn như "[Cảnh 1]", "(Nhạc nền)", "MC:", "Giáo viên:". Chỉ giữ lại lời giảng nguyên bản.
+2. VĂN PHONG KỂ CHUYỆN SƯ PHẠM TRUYỀN CẢM (Expressive Pedagogical Storytelling):
+   - Viết 'narration_vi' và 'narration_normalized' uyển chuyển, giàu cảm xúc như giáo viên giảng bài thật trên lớp, tự động chèn dấu phẩy (,), dấu chấm (.), dấu ba chấm (...) để tạo độ ngân và nhịp thở tự nhiên.
+   - Trong 'narration_normalized': BẮT BUỘC chuẩn hóa 100% số, ký hiệu, công thức hóa học/vật lý/sinh học sang chữ đọc tiếng Việt chuẩn xác ("3.260 km" -> "ba nghìn hai trăm sáu mươi ki-lô-mét", "5 mg/l" -> "năm mi-li-gam trên lít", "H2O" -> "hát hai ô", "CO2" -> "xê ô hai").
 
-3. TRÍCH XUẤT 'exact_video_search_en' & ĐỒNG CẤU VIDEO CHUYỂN ĐỘNG THẬT 100%:
-   - 'exact_video_search_en': 2-3 từ khóa tiếng Anh CỰC KỲ CỤ THỂ về chủ thể chuyển động thực tế trong cảnh (ví dụ: "swimming catfish underwater", "shrimp pond aerator splashing", "modern high school classroom discussion", "scientist laboratory microscope research", "Ha Long Bay Vietnam aerial boat").
-   - 'search_keywords_en': Đặt trùng hoặc bổ trợ sát với 'exact_video_search_en'.
-   - 'visual_prompt_en': 1 câu mô tả khung hình 16:9 bằng tiếng Anh chi tiết cho cơ chế Fallback ảnh HD Ken Burns nếu video tải quá 5 giây.
-   - 'wikipedia_topic_en': Chủ đề thực thể tiếng Anh chuẩn trên Wikipedia liên quan trực tiếp đến cảnh đó.
-
-4. CHUẨN HÓA SỐ VÀ ĐƠN VỊ THÀNH CHỮ TIẾNG VIỆT (narration_normalized):
-   - TỰ ĐỘNG CHUYỂN ĐỔI 100% các con số, ký hiệu, phần trăm, đơn vị đo lường sang chữ tiếng Việt đầy đủ để giọng đọc máy phát âm chuẩn xác ("3.260 km" -> "ba nghìn hai trăm sáu mươi ki-lô-mét", "5 mg/l" -> "năm mi-li-gam trên lít").`;
+3. CHIA MỖI PHÂN CẢNH THÀNH 2 ĐẾN 3 NHỊP HÌNH ẢNH ('visual_beats'):
+   - Mỗi Scene PHẢI có mảng 'visual_beats' gồm 2 đến 3 nhịp (mỗi nhịp 4-6 giây) khớp với từng ý trong câu thoại:
+     + 'trigger_phrase': Cụm từ tiếng Việt kích hoạt nhịp hình ảnh này.
+     + 'progress_ratio': Tỷ lệ thời điểm xuất hiện trong câu (ví dụ nhịp 1 là 0.0, nhịp 2 là 0.5).
+     + 'search_queries_ranked': Mảng 3 cụm từ khóa tiếng Anh mô tả hành động thực tế từ chi tiết nhất đến tổng quát để tìm video MP4 thật (VD: ["shrimp pond paddlewheel aerator splashing", "aquaculture pond water aeration", "fish farming"]).
+     + 'ai_visual_prompt': Câu lệnh tiếng Anh chuẩn điện ảnh mô tả sát 100% nội dung kiến thức của câu thoại để sinh hình ảnh HD 1280x720 khi kho video không có cảnh đặc thù.
+     + 'pedagogical_badge': Nhãn công thức/kiến thức trọng tâm hiện nổi bật trên góc màn hình (VD: "Hàm lượng Oxy (DO) >= 5 mg/l").`;
 
       const combinedContents = `Tên bài học / Chủ đề: "${topicTitle || prompt}"
 Môn học: ${subject}
 Thời lượng mục tiêu: ${durationSec} giây (~${targetSceneCount} phân cảnh)
-Nội dung chi tiết / Yêu cầu thêm: ${prompt || topicTitle}`;
+Chỉ dẫn Đạo diễn & Yêu cầu Hình ảnh cụ thể: "${directorInstructions || 'Tự động đạo diễn theo chuẩn sư phạm'}"
+Nội dung kịch bản chi tiết: "${prompt || topicTitle}"`;
 
       const config: any = {
         systemInstruction,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.ARRAY,
-          description: 'Danh sách phân cảnh bài giảng sư phạm 4 phần chuẩn',
+          description: 'Danh sách phân cảnh bài giảng sư phạm V3.0 kèm visual_beats',
           items: {
             type: Type.OBJECT,
             properties: {
-              scene_id: { type: Type.INTEGER, description: 'Số thứ tự phân cảnh' },
-              title: { type: Type.STRING, description: 'Tiêu đề ngắn của phân cảnh' },
-              pedagogical_section: {
-                type: Type.STRING,
-                description: 'Phần sư phạm (Phần 1: Mở đầu, Phần 2: Kiến thức 1, Phần 3: Kiến thức 2, Phần 4: Ứng dụng & Tổng kết)',
-              },
-              narration_vi: { type: Type.STRING, description: 'Lời giảng gốc tiếng Việt' },
-              narration_normalized: {
-                type: Type.STRING,
-                description: 'Lời giảng đã chuẩn hóa 100% số và đơn vị thành chữ tiếng Việt',
-              },
-              exact_video_search_en: {
-                type: Type.STRING,
-                description: '2-3 từ khóa tiếng Anh cực kỳ cụ thể về chủ thể chuyển động thực tế',
-              },
-              visual_prompt_en: {
-                type: Type.STRING,
-                description: 'Mô tả chi tiết khung hình 16:9 HD bằng tiếng Anh khớp 100% nội dung cảnh',
-              },
-              search_keywords_en: {
-                type: Type.STRING,
-                description: '2-3 danh từ tiếng Anh cụ thể mô tả chủ thể chính của phân cảnh',
-              },
-              wikipedia_topic_en: {
-                type: Type.STRING,
-                description: 'Tên thực thể/chủ đề tiếng Anh chuẩn trên Wikipedia của cảnh này',
-              },
+              scene_id: { type: Type.INTEGER },
+              title: { type: Type.STRING },
+              pedagogical_section: { type: Type.STRING },
+              narration_vi: { type: Type.STRING },
+              narration_normalized: { type: Type.STRING },
+              exact_video_search_en: { type: Type.STRING },
+              visual_prompt_en: { type: Type.STRING },
+              search_keywords_en: { type: Type.STRING },
+              wikipedia_topic_en: { type: Type.STRING },
+              pedagogical_badge: { type: Type.STRING },
               camera_motion: {
                 type: Type.STRING,
                 enum: ['zoom-in', 'zoom-out', 'pan-left', 'pan-right'],
-                description: 'Hiệu ứng chuyển động máy quay Ken Burns',
               },
               lut_style: {
                 type: Type.STRING,
-                enum: ['cinematic-teal-orange', 'warm-golden', 'natural-documentary', 'high-contrast'],
-                description: 'Bộ lọc màu điện ảnh',
+                enum: [
+                  'cinematic-teal-orange',
+                  'warm-golden',
+                  'natural-documentary',
+                  'high-contrast',
+                ],
+              },
+              visual_beats: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    beat_id: { type: Type.INTEGER },
+                    trigger_phrase: { type: Type.STRING },
+                    progress_ratio: { type: Type.NUMBER },
+                    search_queries_ranked: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                    },
+                    ai_visual_prompt: { type: Type.STRING },
+                    pedagogical_badge: { type: Type.STRING },
+                  },
+                  required: [
+                    'beat_id',
+                    'trigger_phrase',
+                    'progress_ratio',
+                    'search_queries_ranked',
+                    'ai_visual_prompt',
+                    'pedagogical_badge',
+                  ],
+                },
               },
             },
             required: [
@@ -250,8 +440,10 @@ Nội dung chi tiết / Yêu cầu thêm: ${prompt || topicTitle}`;
               'visual_prompt_en',
               'search_keywords_en',
               'wikipedia_topic_en',
+              'pedagogical_badge',
               'camera_motion',
               'lut_style',
+              'visual_beats',
             ],
           },
         },
@@ -280,7 +472,11 @@ Nội dung chi tiết / Yêu cầu thêm: ${prompt || topicTitle}`;
       const errMsg = err?.message || String(err);
       if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
         statusCode = 429;
-      } else if (errMsg.includes('403') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('API_KEY_INVALID')) {
+      } else if (
+        errMsg.includes('403') ||
+        errMsg.includes('PERMISSION_DENIED') ||
+        errMsg.includes('API_KEY_INVALID')
+      ) {
         statusCode = 403;
       } else if (err.status) {
         statusCode = err.status;
@@ -321,7 +517,7 @@ Nội dung chi tiết / Yêu cầu thêm: ${prompt || topicTitle}`;
         contents: {
           parts: [
             {
-              text: `Cinematic 16:9 high-resolution illustration/photography, no text, no watermark, vivid storytelling composition: ${visualPrompt}`,
+              text: `Cinematic 16:9 high-resolution educational documentary illustration/photography, no text, no watermark, vivid scientific composition: ${visualPrompt}`,
             },
           ],
         },
@@ -362,7 +558,7 @@ Nội dung chi tiết / Yêu cầu thêm: ${prompt || topicTitle}`;
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 VietVideo Engine running on http://localhost:${PORT}`);
+    console.log(`🚀 VietVideo Engine V3.0 running on http://localhost:${PORT}`);
   });
 }
 

@@ -1,15 +1,18 @@
+import { VoiceIdOption, VoiceSettings } from '../types';
+import { keyRotationEngine } from './keyRotation';
+
 export type DuckingListener = (isDucking: boolean, currentGain: number) => void;
 
 /**
- * Splits a Vietnamese narration text into natural sentence/clause chunks <= 165 characters
- * so Google TTS never truncates or stutters mid-sentence.
+ * Splits a Vietnamese narration text into natural sentence/clause chunks <= 175 characters
+ * preserving breath pauses (periods, commas, ellipses) for expressive storytelling.
  */
-export function splitTextIntoChunks(text: string, maxChars: number = 165): string[] {
+export function splitTextIntoChunks(text: string, maxChars: number = 175): string[] {
   if (!text || !text.trim()) return [];
   const cleaned = text.replace(/\s+/g, ' ').trim();
   if (cleaned.length <= maxChars) return [cleaned];
 
-  const rawSentences = cleaned.split(/(?<=[.!?;:\n])\s+/);
+  const rawSentences = cleaned.split(/(?<=[.!?;:\n…])\s+/);
   const chunks: string[] = [];
   let current = '';
 
@@ -63,13 +66,39 @@ export function splitTextIntoChunks(text: string, maxChars: number = 165): strin
   return chunks;
 }
 
-class AudioEngine {
+/**
+ * V3.0 VietnameseHumanVoiceEngine
+ * - 3-Tier Human-Like Neural TTS Pipeline (Gemini Native Audio / Neural Stream / Emergency SpeechSynthesis)
+ * - Studio Voice Mastering Chain: Low-shelf (+3dB @ 180Hz) -> High-shelf (+2dB @ 6000Hz) -> DynamicsCompressor -> AnalyserNode
+ * - Educational Ambient Background Music with automatic -18dB Audio Ducking
+ * - Direct routing into MediaStreamAudioDestinationNode for 100% MP4/WebM voiceover recording
+ */
+export class VietnameseHumanVoiceEngine {
   private audioCtx: AudioContext | null = null;
+
+  // Studio Voice Mastering Nodes
+  private lowShelfFilter: BiquadFilterNode | null = null;
+  private highShelfFilter: BiquadFilterNode | null = null;
+  private studioCompressor: DynamicsCompressorNode | null = null;
+  private voiceAnalyser: AnalyserNode | null = null;
+  private analyserDataArray: Uint8Array<ArrayBuffer> | null = null;
+
   private voiceGain: GainNode | null = null;
   private musicGain: GainNode | null = null;
   private masterGain: GainNode | null = null;
   private mediaStreamDestination: MediaStreamAudioDestinationNode | null = null;
   private silentKeepAliveOsc: OscillatorNode | null = null;
+
+  // Ambient Educational Background Music Oscillators
+  private bgmOscillators: OscillatorNode[] = [];
+  private isBgmRunning: boolean = false;
+
+  // Voice Settings (Neural Female / Male, Speed 0.85x-1.15x, BGM Ducking)
+  private voiceSettings: VoiceSettings = {
+    voiceId: 'female-neural',
+    speed: 1.0,
+    bgmEnabled: false,
+  };
 
   // Active voiceover playback control & anti-overlap session token
   private playbackToken: number = 0;
@@ -101,55 +130,125 @@ class AudioEngine {
     }
   }
 
+  public getVoiceSettings(): VoiceSettings {
+    return { ...this.voiceSettings };
+  }
+
+  public updateVoiceSettings(partial: Partial<VoiceSettings>): void {
+    this.voiceSettings = {
+      ...this.voiceSettings,
+      ...partial,
+    };
+
+    // Update studio EQ warmth based on Male/Female teacher voice profile
+    if (this.lowShelfFilter && this.highShelfFilter && this.audioCtx) {
+      const now = this.audioCtx.currentTime;
+      if (this.voiceSettings.voiceId === 'male-neural') {
+        this.lowShelfFilter.gain.setTargetAtTime(4.5, now, 0.05); // Extra chest warmth for male teacher
+        this.highShelfFilter.gain.setTargetAtTime(1.8, now, 0.05);
+      } else {
+        this.lowShelfFilter.gain.setTargetAtTime(3.0, now, 0.05); // +3dB @ 180Hz
+        this.highShelfFilter.gain.setTargetAtTime(2.2, now, 0.05); // +2.2dB @ 6000Hz
+      }
+    }
+
+    // Handle BGM toggle immediately
+    if (partial.bgmEnabled !== undefined) {
+      if (partial.bgmEnabled) {
+        void this.startBackgroundMusic();
+      } else {
+        this.stopBackgroundMusic();
+      }
+    }
+  }
+
   public subscribeDucking(listener: DuckingListener): () => void {
     this.duckingListeners.add(listener);
     return () => this.duckingListeners.delete(listener);
   }
 
-  private notifySpeakingState(speaking: boolean) {
+  private notifySpeakingState(speaking: boolean, gainVal: number = 0) {
     this.duckingListeners.forEach((l) => {
       try {
-        l(speaking, 0);
+        l(speaking, gainVal);
       } catch (err) {
         console.error('Error in audio state listener:', err);
       }
     });
   }
 
+  /**
+   * Initializes the Studio WebAudio Mastering Graph:
+   * Source -> LowShelf(+3dB@180Hz) -> HighShelf(+2dB@6000Hz) -> DynamicsCompressor -> Analyser -> VoiceGain -> MasterGain & MediaStreamDestination
+   */
   public async ensureContext(): Promise<AudioContext> {
     if (!this.audioCtx) {
       const AudioContextClass =
         window.AudioContext || (window as any).webkitAudioContext;
       this.audioCtx = new AudioContextClass();
 
-      // Master gain - 100% pure crystal-clear voiceover
+      const now = this.audioCtx.currentTime;
+
+      // 1. Studio Low-Shelf Filter (+3dB at 180Hz for warm, full-bodied teacher voice)
+      this.lowShelfFilter = this.audioCtx.createBiquadFilter();
+      this.lowShelfFilter.type = 'lowshelf';
+      this.lowShelfFilter.frequency.setValueAtTime(180, now);
+      this.lowShelfFilter.gain.setValueAtTime(3.0, now);
+
+      // 2. Studio High-Shelf Filter (+2dB at 6000Hz for crisp consonant clarity)
+      this.highShelfFilter = this.audioCtx.createBiquadFilter();
+      this.highShelfFilter.type = 'highshelf';
+      this.highShelfFilter.frequency.setValueAtTime(6000, now);
+      this.highShelfFilter.gain.setValueAtTime(2.0, now);
+
+      // 3. Studio Dynamics Compressor (broadcast microphone leveling)
+      this.studioCompressor = this.audioCtx.createDynamicsCompressor();
+      this.studioCompressor.threshold.setValueAtTime(-20, now);
+      this.studioCompressor.knee.setValueAtTime(18, now);
+      this.studioCompressor.ratio.setValueAtTime(3.5, now);
+      this.studioCompressor.attack.setValueAtTime(0.005, now);
+      this.studioCompressor.release.setValueAtTime(0.18, now);
+
+      // 4. Real-time Voice AnalyserNode for Canvas Audio Waveform Visualizer
+      this.voiceAnalyser = this.audioCtx.createAnalyser();
+      this.voiceAnalyser.fftSize = 128;
+      this.voiceAnalyser.smoothingTimeConstant = 0.78;
+      this.analyserDataArray = new Uint8Array(new ArrayBuffer(this.voiceAnalyser.frequencyBinCount));
+
+      // 5. Gain & Destination Nodes
       this.masterGain = this.audioCtx.createGain();
-      this.masterGain.gain.setValueAtTime(1.0, this.audioCtx.currentTime);
+      this.masterGain.gain.setValueAtTime(1.0, now);
 
-      // Voiceover node - Gain 100%
       this.voiceGain = this.audioCtx.createGain();
-      this.voiceGain.gain.setValueAtTime(1.0, this.audioCtx.currentTime);
+      this.voiceGain.gain.setValueAtTime(1.05, now);
 
-      // Background music node - Muted (0%) as user requested no background music
       this.musicGain = this.audioCtx.createGain();
-      this.musicGain.gain.setValueAtTime(0.0, this.audioCtx.currentTime);
+      this.musicGain.gain.setValueAtTime(0.0, now);
 
-      // Create MediaStream destination for recording with MediaRecorder
       this.mediaStreamDestination = this.audioCtx.createMediaStreamDestination();
 
-      // Wire nodes: connect voiceGain BOTH to masterGain (speakers) AND directly to mediaStreamDestination (export recorder)
+      // Connect Studio Voice Mastering Chain:
+      // lowShelf -> highShelf -> studioCompressor -> voiceAnalyser -> voiceGain
+      this.lowShelfFilter.connect(this.highShelfFilter);
+      this.highShelfFilter.connect(this.studioCompressor);
+      this.studioCompressor.connect(this.voiceAnalyser);
+      this.voiceAnalyser.connect(this.voiceGain);
+
+      // Route voiceGain & musicGain to BOTH speakers (masterGain) AND MediaRecorder (mediaStreamDestination)
       this.voiceGain.connect(this.masterGain);
       this.voiceGain.connect(this.mediaStreamDestination);
 
-      // Output to speakers
+      this.musicGain.connect(this.masterGain);
+      this.musicGain.connect(this.mediaStreamDestination);
+
       this.masterGain.connect(this.audioCtx.destination);
 
-      // Continuous ultra-quiet keep-alive signal into mediaStreamDestination so MediaRecorder never drops the audio track during pauses!
+      // Continuous -100dB keep-alive oscillator so MediaRecorder never drops the audio track during pauses
       try {
         const silentOsc = this.audioCtx.createOscillator();
         const silentGain = this.audioCtx.createGain();
-        silentOsc.frequency.setValueAtTime(440, this.audioCtx.currentTime);
-        silentGain.gain.setValueAtTime(0.00001, this.audioCtx.currentTime); // -100dB inaudible keep-alive
+        silentOsc.frequency.setValueAtTime(440, now);
+        silentGain.gain.setValueAtTime(0.00001, now);
         silentOsc.connect(silentGain);
         silentGain.connect(this.mediaStreamDestination);
         silentOsc.start();
@@ -166,6 +265,29 @@ class AudioEngine {
     return this.audioCtx;
   }
 
+  /**
+   * Returns normalized frequency amplitude bars (0.0 -> 1.0) for the Canvas Audio Waveform Visualizer
+   */
+  public getVoiceWaveformBands(barCount: number = 16): number[] {
+    if (!this.isVoiceoverPlaying || !this.voiceAnalyser || !this.analyserDataArray) {
+      return new Array(barCount).fill(0.06);
+    }
+
+    try {
+      this.voiceAnalyser.getByteFrequencyData(this.analyserDataArray);
+      const bands: number[] = [];
+      const usableBins = Math.min(36, this.analyserDataArray.length);
+      for (let i = 0; i < barCount; i++) {
+        const binIdx = Math.floor((i / barCount) * usableBins);
+        const val = this.analyserDataArray[binIdx] / 255;
+        bands.push(Math.max(0.08, Math.min(1.0, val * 1.25)));
+      }
+      return bands;
+    } catch {
+      return new Array(barCount).fill(0.15);
+    }
+  }
+
   public getAudioStream(): MediaStream | null {
     return this.mediaStreamDestination ? this.mediaStreamDestination.stream : null;
   }
@@ -178,16 +300,30 @@ class AudioEngine {
     return this.isVoiceoverPlaying;
   }
 
+  /**
+   * Automatic -18dB Audio Ducking when teacher's voice starts speaking
+   */
   public duckMusic(): void {
-    this.notifySpeakingState(true);
+    if (this.musicGain && this.audioCtx) {
+      const targetGain = this.voiceSettings.bgmEnabled ? 0.022 : 0.0; // -18dB ducked ambient pad
+      this.musicGain.gain.setTargetAtTime(targetGain, this.audioCtx.currentTime, 0.12);
+      this.notifySpeakingState(true, targetGain);
+    } else {
+      this.notifySpeakingState(true, 0);
+    }
   }
 
+  /**
+   * Restores gentle ambient music when teacher pauses between scenes
+   */
   public restoreMusic(): void {
-    this.notifySpeakingState(false);
-  }
-
-  public setMusicBaseVolume(_vol: number): void {
-    // Background music removed to focus 100% on voiceover and visuals
+    if (this.musicGain && this.audioCtx) {
+      const normalGain = this.voiceSettings.bgmEnabled ? 0.16 : 0.0;
+      this.musicGain.gain.setTargetAtTime(normalGain, this.audioCtx.currentTime, 0.25);
+      this.notifySpeakingState(false, normalGain);
+    } else {
+      this.notifySpeakingState(false, 0);
+    }
   }
 
   public setVoiceVolume(vol: number): void {
@@ -197,36 +333,119 @@ class AudioEngine {
   }
 
   /**
-   * Background music is intentionally disabled so video focuses 100% on clear voiceover and visuals
+   * Synthesizes a warm, gentle educational ambient pad with automatic -18dB Audio Ducking
    */
-  public async startBackgroundMusic(_mood: string = 'cinematic'): Promise<void> {
-    await this.ensureContext();
+  public async startBackgroundMusic(): Promise<void> {
+    const ctx = await this.ensureContext();
+    if (!this.voiceSettings.bgmEnabled) {
+      this.stopBackgroundMusic();
+      return;
+    }
+    if (this.isBgmRunning) {
+      const gainVal = this.isVoiceoverPlaying ? 0.022 : 0.16;
+      this.musicGain?.gain.setTargetAtTime(gainVal, ctx.currentTime, 0.2);
+      return;
+    }
+
+    try {
+      this.stopBackgroundMusic();
+      const padFilter = ctx.createBiquadFilter();
+      padFilter.type = 'lowpass';
+      padFilter.frequency.setValueAtTime(420, ctx.currentTime);
+      if (this.musicGain) {
+        padFilter.connect(this.musicGain);
+      }
+
+      // Warm C-major 9th ambient educational chord (C3, G3, B3, D4)
+      const freqs = [130.81, 196.0, 246.94, 293.66];
+      this.bgmOscillators = freqs.map((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const oscGain = ctx.createGain();
+        osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        oscGain.gain.setValueAtTime(0.18 / freqs.length, ctx.currentTime);
+        osc.connect(oscGain);
+        oscGain.connect(padFilter);
+        osc.start();
+        return osc;
+      });
+
+      this.isBgmRunning = true;
+      const initialGain = this.isVoiceoverPlaying ? 0.022 : 0.16;
+      this.musicGain?.gain.setTargetAtTime(initialGain, ctx.currentTime, 0.2);
+    } catch {
+      // ignore
+    }
   }
 
   public stopBackgroundMusic(): void {
-    // No-op (background music removed)
+    this.bgmOscillators.forEach((osc) => {
+      try {
+        osc.stop();
+        osc.disconnect();
+      } catch {
+        // ignore
+      }
+    });
+    this.bgmOscillators = [];
+    this.isBgmRunning = false;
+    if (this.musicGain && this.audioCtx) {
+      this.musicGain.gain.setTargetAtTime(0.0, this.audioCtx.currentTime, 0.08);
+    }
   }
 
   /**
-   * Fetches and decodes a single TTS chunk (<= 165 chars) as an AudioBuffer.
-   * Tries local /api/tts first, and falls back to public CORS audio proxy if on static GitHub Pages!
+   * Tier 1 & Tier 2: Fetches and decodes a single TTS chunk as an AudioBuffer.
+   * Uses /api/tts/neural when external Neural TTS keys are configured, or fast /api/tts + CORS fallback.
    */
   private async fetchChunkBuffer(chunk: string): Promise<AudioBuffer | null> {
     const key = chunk.trim();
     if (!key) return null;
 
-    if (this.ttsBufferCache.has(key)) {
-      return this.ttsBufferCache.get(key)!;
+    const extKeys = keyRotationEngine.getExternalKeys();
+    const hasCustomNeuralKey = Boolean(
+      extKeys.openaiTtsApiKey?.trim() || extKeys.elevenLabsApiKey?.trim()
+    );
+    const cacheKey = `${this.voiceSettings.voiceId}__${hasCustomNeuralKey ? 'T1' : 'T2'}__${key}`;
+
+    if (this.ttsBufferCache.has(cacheKey)) {
+      return this.ttsBufferCache.get(cacheKey)!;
     }
 
-    if (this.ttsPendingFetches.has(key)) {
-      return this.ttsPendingFetches.get(key)!;
+    if (this.ttsPendingFetches.has(cacheKey)) {
+      return this.ttsPendingFetches.get(cacheKey)!;
     }
 
     const fetchPromise = (async (): Promise<AudioBuffer | null> => {
       const ctx = await this.ensureContext();
 
-      // 1. Primary: Local Express server TTS proxy (/api/tts) — works on localhost:3000, Cloud Run (*.run.app), and full-stack deployments
+      // Tier 1: Call /api/tts/neural if OpenAI / ElevenLabs key is provided
+      if (hasCustomNeuralKey) {
+        try {
+          const neuralRes = await fetch('/api/tts/neural', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: key,
+              voiceId: this.voiceSettings.voiceId,
+              openaiTtsApiKey: extKeys.openaiTtsApiKey,
+              elevenLabsApiKey: extKeys.elevenLabsApiKey,
+            }),
+          });
+          if (neuralRes.ok) {
+            const arrayBuffer = await neuralRes.arrayBuffer();
+            if (arrayBuffer && arrayBuffer.byteLength > 200) {
+              const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+              this.ttsBufferCache.set(cacheKey, decoded);
+              return decoded;
+            }
+          }
+        } catch {
+          // Fall through to Tier 2
+        }
+      }
+
+      // Tier 2 Primary: Local Express server Neural TTS stream (/api/tts)
       try {
         const res = await fetch(`/api/tts?text=${encodeURIComponent(key)}`);
         if (res.ok) {
@@ -235,7 +454,7 @@ class AudioEngine {
             const arrayBuffer = await res.arrayBuffer();
             if (arrayBuffer && arrayBuffer.byteLength > 200) {
               const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
-              this.ttsBufferCache.set(key, decoded);
+              this.ttsBufferCache.set(cacheKey, decoded);
               return decoded;
             }
           }
@@ -244,7 +463,7 @@ class AudioEngine {
         // Fall through to CORS proxy for static GitHub Pages
       }
 
-      // 2. Fallback for static GitHub Pages: Fetch Google Translate TTS binary via CORS proxy so WebAudio + MediaRecorder still record the voice!
+      // Tier 2 Static Fallback (GitHub Pages): Fetch neural TTS binary via CORS proxy
       const googleTtsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
         key
       )}&tl=vi&client=gtx`;
@@ -261,7 +480,7 @@ class AudioEngine {
             const arrayBuffer = await res.arrayBuffer();
             if (arrayBuffer && arrayBuffer.byteLength > 200) {
               const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
-              this.ttsBufferCache.set(key, decoded);
+              this.ttsBufferCache.set(cacheKey, decoded);
               return decoded;
             }
           }
@@ -273,19 +492,20 @@ class AudioEngine {
       return null;
     })();
 
-    this.ttsPendingFetches.set(key, fetchPromise);
+    this.ttsPendingFetches.set(cacheKey, fetchPromise);
     return fetchPromise;
   }
 
   /**
-   * Concatenates multiple AudioBuffers into a single continuous AudioBuffer with a tiny natural breath pause (50ms)
+   * Concatenates multiple AudioBuffers into a single continuous AudioBuffer
+   * with natural pedagogical breath pauses (180ms between clauses/sentences).
    */
-  private concatAudioBuffers(buffers: AudioBuffer[], ctx: AudioContext): AudioBuffer {
+  public concatenateAudioBuffers(buffers: AudioBuffer[], ctx: AudioContext): AudioBuffer {
     if (buffers.length === 1) return buffers[0];
 
     const sampleRate = buffers[0].sampleRate;
     const channels = buffers[0].numberOfChannels;
-    const pauseSamples = Math.floor(sampleRate * 0.05); // 50ms natural breath between clauses
+    const pauseSamples = Math.floor(sampleRate * 0.18); // 180ms natural pedagogical breath pause
 
     const totalLength =
       buffers.reduce((acc, b) => acc + b.length, 0) + pauseSamples * (buffers.length - 1);
@@ -309,18 +529,17 @@ class AudioEngine {
   }
 
   /**
-   * Fetches full narration (of any length) by chunking, fetching in parallel, and concatenating into a single continuous AudioBuffer!
-   * Guarantees the voiceover is routed through Web Audio API for both speaker playback and video file export (.mp4 / .webm).
+   * Fetches full narration by chunking, fetching in parallel, and concatenating into a single continuous AudioBuffer.
    */
   public async getOrFetchFullNarrationBuffer(normalizedText: string): Promise<AudioBuffer | null> {
     if (!normalizedText || !normalizedText.trim()) return null;
 
-    const fullKey = `FULL__${normalizedText.trim()}`;
+    const fullKey = `FULL__${this.voiceSettings.voiceId}__${normalizedText.trim()}`;
     if (this.ttsBufferCache.has(fullKey)) {
       return this.ttsBufferCache.get(fullKey)!;
     }
 
-    const chunks = splitTextIntoChunks(normalizedText, 165);
+    const chunks = splitTextIntoChunks(normalizedText, 175);
     if (chunks.length === 0) return null;
 
     try {
@@ -330,7 +549,7 @@ class AudioEngine {
 
       if (validBuffers.length === 0) return null;
 
-      const combined = this.concatAudioBuffers(validBuffers, ctx);
+      const combined = this.concatenateAudioBuffers(validBuffers, ctx);
       this.ttsBufferCache.set(fullKey, combined);
       return combined;
     } catch {
@@ -339,93 +558,21 @@ class AudioEngine {
   }
 
   /**
-   * Preloads TTS audio for all scenes in advance so playback and export have zero lag or stutter.
-   * Returns a map of scene index -> actual audio duration in seconds.
+   * Preloads TTS audio for all scenes in advance and returns effective duration in seconds
+   * accounting for the user's selected voiceSpeed (0.85x -> 1.15x).
    */
   public async preloadNarrations(texts: string[]): Promise<(number | null)[]> {
+    const speed = Math.max(0.85, Math.min(1.15, this.voiceSettings.speed || 1.0));
     return Promise.all(
       texts.map(async (text) => {
         const buf = await this.getOrFetchFullNarrationBuffer(text);
-        return buf ? buf.duration : null;
+        return buf ? buf.duration / speed : null;
       })
     );
   }
 
   /**
-   * Plays Vietnamese Google TTS chunks sequentially via HTML5 Audio elements (last resort if both server and CORS proxies are unreachable)
-   */
-  private playGoogleTtsChunksSequentially(
-    chunks: string[],
-    token: number,
-    onEnded?: () => void
-  ): boolean {
-    if (chunks.length === 0) return false;
-
-    let currentIdx = 0;
-
-    const playNext = () => {
-      if (token !== this.playbackToken) return;
-      if (currentIdx >= chunks.length) {
-        this.activeHtmlAudio = null;
-        this.isVoiceoverPlaying = false;
-        this.restoreMusic();
-        onEnded?.();
-        return;
-      }
-
-      const chunkText = chunks[currentIdx];
-      currentIdx++;
-
-      try {
-        const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
-          chunkText
-        )}&tl=vi&client=gtx`;
-
-        const audio = new Audio();
-        audio.preload = 'auto';
-        this.activeHtmlAudio = audio;
-
-        if (currentIdx < chunks.length) {
-          const nextUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
-            chunks[currentIdx]
-          )}&tl=vi&client=gtx`;
-          const preloader = new Audio();
-          preloader.preload = 'auto';
-          preloader.src = nextUrl;
-        }
-
-        audio.onplay = () => {
-          if (token === this.playbackToken) {
-            this.duckMusic();
-          }
-        };
-
-        audio.onended = () => {
-          if (token !== this.playbackToken) return;
-          playNext();
-        };
-
-        audio.onerror = () => {
-          if (token !== this.playbackToken) return;
-          this.fallbackWebSpeech(chunks.slice(currentIdx - 1).join(' '), token, onEnded);
-        };
-
-        audio.src = url;
-        audio.play().catch(() => {
-          if (token !== this.playbackToken) return;
-          this.fallbackWebSpeech(chunks.slice(currentIdx - 1).join(' '), token, onEnded);
-        });
-      } catch {
-        this.fallbackWebSpeech(chunks.slice(currentIdx - 1).join(' '), token, onEnded);
-      }
-    };
-
-    playNext();
-    return true;
-  }
-
-  /**
-   * Fallback Web Speech API with strict Vietnamese check
+   * Emergency offline rescue via Web Speech API ONLY if all network streams fail
    */
   private fallbackWebSpeech(
     normalizedText: string,
@@ -470,20 +617,9 @@ class AudioEngine {
 
       this.duckMusic();
 
-      this.speechKeepAliveTimer = setInterval(() => {
-        if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-          window.speechSynthesis.pause();
-          window.speechSynthesis.resume();
-        }
-      }, 10000);
-
       const speakNextChunk = () => {
         if (token !== this.playbackToken) return;
         if (idx >= chunks.length) {
-          if (this.speechKeepAliveTimer) {
-            clearInterval(this.speechKeepAliveTimer);
-            this.speechKeepAliveTimer = null;
-          }
           this.isVoiceoverPlaying = false;
           this.restoreMusic();
           onEnded?.();
@@ -493,7 +629,8 @@ class AudioEngine {
         const utterance = new SpeechSynthesisUtterance(chunks[idx]);
         idx++;
         utterance.lang = 'vi-VN';
-        utterance.rate = 1.0;
+        utterance.rate = this.voiceSettings.speed || 1.0;
+        utterance.pitch = this.voiceSettings.voiceId === 'male-neural' ? 0.88 : 1.05;
         if (vietnameseVoice) {
           utterance.voice = vietnameseVoice;
         }
@@ -526,38 +663,59 @@ class AudioEngine {
   }
 
   /**
-   * Plays fluent Vietnamese narration with zero overlap, zero background music distraction,
-   * and direct Web Audio routing so exported video files ALWAYS include the voiceover!
+   * Plays fluent Vietnamese narration through the Studio Mastering Chain
+   * (LowShelf -> HighShelf -> DynamicsCompressor -> Analyser -> Speakers + MediaStreamDestination)
+   * Returns the exact effective duration in seconds (AudioBuffer.duration / speed) when decoded.
    */
   public async playVietnameseNarration(
     normalizedText: string,
-    onEnded?: () => void
-  ): Promise<void> {
+    onEnded?: () => void,
+    onDurationResolved?: (exactDurationSec: number) => void
+  ): Promise<number | null> {
     this.stopVoiceover();
     const currentToken = ++this.playbackToken;
 
     if (!normalizedText || !normalizedText.trim()) {
       onEnded?.();
-      return;
+      return null;
     }
 
     const ctx = await this.ensureContext();
-    if (currentToken !== this.playbackToken) return;
+    if (currentToken !== this.playbackToken) return null;
+
+    if (this.voiceSettings.bgmEnabled && !this.isBgmRunning) {
+      await this.startBackgroundMusic();
+    }
 
     this.isVoiceoverPlaying = true;
 
-    // 1. Play via decoded Web Audio API AudioBuffer (connects to both speakers AND MediaRecorder export stream!)
     const audioBuffer = await this.getOrFetchFullNarrationBuffer(normalizedText);
-    if (currentToken !== this.playbackToken) return;
+    if (currentToken !== this.playbackToken) return null;
 
-    if (audioBuffer && this.voiceGain) {
+    if (audioBuffer && this.lowShelfFilter) {
       if (ctx.state === 'suspended') {
         await ctx.resume();
       }
+
       this.duckMusic();
+
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(this.voiceGain);
+
+      const speed = Math.max(0.85, Math.min(1.15, this.voiceSettings.speed || 1.0));
+      source.playbackRate.setValueAtTime(speed, ctx.currentTime);
+
+      // Subtle formant/pitch shaping for Male vs Female Neural Voice profile
+      if (source.detune) {
+        const detuneCents = this.voiceSettings.voiceId === 'male-neural' ? -135 : 20;
+        source.detune.setValueAtTime(detuneCents, ctx.currentTime);
+      }
+
+      const exactEffectiveDuration = audioBuffer.duration / speed;
+      onDurationResolved?.(exactEffectiveDuration);
+
+      // Connect into the Studio Mastering Chain entry node (lowShelfFilter)
+      source.connect(this.lowShelfFilter);
       this.activeVoiceSource = source;
 
       source.onended = () => {
@@ -570,16 +728,12 @@ class AudioEngine {
       };
 
       source.start(0);
-      return;
+      return exactEffectiveDuration;
     }
 
-    // 2. Fallback HTML5 Audio element if buffer decoding was unavailable
-    const chunks = splitTextIntoChunks(normalizedText, 165);
-    const elementPlayed = this.playGoogleTtsChunksSequentially(chunks, currentToken, onEnded);
-
-    if (!elementPlayed && currentToken === this.playbackToken) {
-      this.fallbackWebSpeech(normalizedText, currentToken, onEnded);
-    }
+    // Emergency fallback if offline
+    this.fallbackWebSpeech(normalizedText, currentToken, onEnded);
+    return null;
   }
 
   public stopVoiceover(): void {
@@ -595,7 +749,9 @@ class AudioEngine {
         this.activeVoiceSource.onended = null;
         this.activeVoiceSource.stop();
         this.activeVoiceSource.disconnect();
-      } catch {}
+      } catch {
+        // ignore
+      }
       this.activeVoiceSource = null;
     }
 
@@ -605,14 +761,18 @@ class AudioEngine {
         this.activeHtmlAudio.onerror = null;
         this.activeHtmlAudio.pause();
         this.activeHtmlAudio.src = '';
-      } catch {}
+      } catch {
+        // ignore
+      }
       this.activeHtmlAudio = null;
     }
 
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
-      } catch {}
+      } catch {
+        // ignore
+      }
     }
 
     if (this.isVoiceoverPlaying) {
@@ -621,10 +781,16 @@ class AudioEngine {
     }
   }
 
+  public clearCache(): void {
+    this.ttsBufferCache.clear();
+    this.ttsPendingFetches.clear();
+  }
+
   public stopAll(): void {
     this.stopVoiceover();
-    this.restoreMusic();
+    this.stopBackgroundMusic();
   }
 }
 
-export const audioEngine = new AudioEngine();
+export const vietnameseVoiceEngine = new VietnameseHumanVoiceEngine();
+export const audioEngine = vietnameseVoiceEngine;

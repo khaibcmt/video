@@ -483,12 +483,30 @@ export const SceneListEditor: React.FC<SceneListEditorProps> = ({
                     </div>
                   </div>
 
-                  {/* Active Video Stream Info Pill */}
-                  <div className="px-2.5 py-1 rounded-lg bg-slate-950/80 border border-slate-800/90 text-[10px] text-slate-400 flex items-center justify-between truncate">
-                    <span className="truncate text-emerald-300 font-medium">
-                      {scene.videoSourceLabel || '🎬 Luồng Video MP4/WebM Trực Tiếp (Loop 30fps)'}
-                    </span>
-                    <span className="text-slate-500 font-mono shrink-0 ml-2">Auto-Loop</span>
+                  {/* Active Video Stream Info Pill & Pedagogical Badge */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-semibold text-amber-400 shrink-0">
+                        📌 Nhãn kiến thức:
+                      </span>
+                      <input
+                        type="text"
+                        value={scene.pedagogical_badge || ''}
+                        onChange={(e) =>
+                          onUpdateScene(idx, { pedagogical_badge: e.target.value })
+                        }
+                        placeholder="VD: Hàm lượng Oxy (DO) >= 5 mg/l"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-md px-2 py-1 text-[11px] text-amber-200 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div className="px-2.5 py-1 rounded-lg bg-slate-950/80 border border-slate-800/90 text-[10px] text-slate-400 flex items-center justify-between truncate">
+                      <span className="truncate text-emerald-300 font-medium">
+                        {scene.videoSourceLabel || '🎬 Luồng Video MP4/WebM Trực Tiếp (Loop 30fps)'}
+                      </span>
+                      <span className="text-cyan-400 font-mono shrink-0 ml-2">
+                        {scene.visual_beats?.length || 2} Visual Beats
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>

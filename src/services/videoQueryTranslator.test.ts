@@ -33,13 +33,21 @@ test('translateNarrationToVideoQueries maps specialized aquaculture and classroo
   assert.ok(classroomRes.curatedVideoUrls.length >= 3);
 });
 
-test('normalizeVietnameseNumbers converts 3.260 km and scientific units into full Vietnamese words', () => {
+test('normalizeVietnameseNumbers converts 3.260 km, scientific units, and chemical formulas into full Vietnamese words', () => {
   const normalizedKm = normalizeVietnameseNumbers(
-    'Việt Nam có đường bờ biển dài 3.260 km và oxy đạt 5 mg/l.'
+    'Việt Nam có đường bờ biển dài 3.260 km, phân tử H2O, khí CO2 và DO >= 5 mg/l.'
   );
   assert.ok(
     normalizedKm.includes('ba nghìn hai trăm sáu mươi ki-lô-mét'),
     `Expected "ba nghìn hai trăm sáu mươi ki-lô-mét" in: ${normalizedKm}`
+  );
+  assert.ok(
+    normalizedKm.includes('hát hai ô'),
+    `Expected "hát hai ô" in: ${normalizedKm}`
+  );
+  assert.ok(
+    normalizedKm.includes('xê ô hai'),
+    `Expected "xê ô hai" in: ${normalizedKm}`
   );
   assert.ok(
     normalizedKm.includes('năm mi-li-gam trên lít'),
@@ -47,15 +55,25 @@ test('normalizeVietnameseNumbers converts 3.260 km and scientific units into ful
   );
 });
 
-test('generateAutonomousPedagogicalScenes produces 4-part pedagogical structure matching 1, 2, and 3 minute durations', () => {
+test('generateAutonomousPedagogicalScenes produces 4-part pedagogical structure with visual_beats and directorInstructions', () => {
   const scenes1Min = generateAutonomousPedagogicalScenes(
     'Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến',
     'Công nghệ',
-    60
+    60,
+    'Phần 1 bối cảnh ao nuôi ĐBSCL; Phần 2 so sánh nuôi quảng canh và thâm canh có quạt nước; hiện công thức DO >= 5 mg/l góc phải'
   );
   assert.equal(scenes1Min.length, 3);
   assert.equal(scenes1Min.reduce((s, c) => s + c.duration_seconds, 0), 60);
-  assert.ok(scenes1Min.every((s) => s.exact_video_search_en && s.pedagogical_section));
+  assert.ok(
+    scenes1Min.every(
+      (s) =>
+        s.exact_video_search_en &&
+        s.pedagogical_section &&
+        s.pedagogical_badge &&
+        Array.isArray(s.visual_beats) &&
+        s.visual_beats.length >= 2
+    )
+  );
 
   const scenes2Min = generateAutonomousPedagogicalScenes(
     'Bài 9: Các nhóm thủy sản và phương thức nuôi phổ biến',

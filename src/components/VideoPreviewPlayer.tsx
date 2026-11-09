@@ -169,13 +169,20 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
     // Wait until current scene video (canplaythrough) or fallback HD image (onload) is ready in buffer
     await waitForSceneMediaReady(scenes[startIdx], 2000);
 
-    // Trigger narration for the current scene
-    if (!isMuted) {
-      audioEngine.playVietnameseNarration(scenes[startIdx].narration_normalized);
-    }
-
     let currentIdx = startIdx;
     let sceneStartTimestamp = performance.now() - initialSceneElapsed * 1000;
+    let activeAudioExactDuration: number | null = null;
+
+    // Trigger narration for the current scene and capture exact AudioBuffer.duration
+    if (!isMuted) {
+      void audioEngine.playVietnameseNarration(
+        scenes[startIdx].narration_normalized,
+        undefined,
+        (exactSec) => {
+          activeAudioExactDuration = exactSec;
+        }
+      );
+    }
 
     const tick = () => {
       const now = performance.now();
@@ -186,7 +193,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
       }
 
       const sceneElapsed = (now - sceneStartTimestamp) / 1000;
-      const baseDuration = currentScene.duration_seconds;
+      const baseDuration = activeAudioExactDuration || currentScene.duration_seconds;
 
       // Calculate total elapsed time for scrubber bar
       const priorDuration = scenes
@@ -194,7 +201,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
         .reduce((acc, s) => acc + s.duration_seconds, 0);
       const elapsedTotal = Math.min(
         totalDuration,
-        priorDuration + Math.min(sceneElapsed, baseDuration)
+        priorDuration + Math.min(sceneElapsed, currentScene.duration_seconds)
       );
       setCurrentTimeSec(elapsedTotal);
 
@@ -216,6 +223,7 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
         }
 
         currentIdx++;
+        activeAudioExactDuration = null;
         sceneStartTimestamp = performance.now();
         setActiveSceneIdx(currentIdx);
         onSelectScene(currentIdx);
@@ -223,14 +231,21 @@ export const VideoPreviewPlayer: React.FC<VideoPreviewPlayerProps> = ({
         const nextSceneToPlay = scenes[currentIdx];
         if (!isMuted && nextSceneToPlay) {
           void waitForSceneMediaReady(nextSceneToPlay, 1500).then(() => {
-            audioEngine.playVietnameseNarration(nextSceneToPlay.narration_normalized);
+            void audioEngine.playVietnameseNarration(
+              nextSceneToPlay.narration_normalized,
+              undefined,
+              (exactSec) => {
+                activeAudioExactDuration = exactSec;
+              }
+            );
           });
         }
       }
 
       const activeScene = scenes[currentIdx];
       const activeElapsed = (performance.now() - sceneStartTimestamp) / 1000;
-      const sceneProgress = Math.min(1.0, activeElapsed / activeScene.duration_seconds);
+      const effectiveSceneDur = activeAudioExactDuration || activeScene.duration_seconds;
+      const sceneProgress = Math.min(1.0, activeElapsed / Math.max(1, effectiveSceneDur));
 
       // Transition check (last 0.8s, only when voiceover is done or nearly done)
       const transitionWindow = 0.8;

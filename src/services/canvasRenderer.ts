@@ -1,10 +1,11 @@
-import { CameraMotion, LutStyle, Scene } from '../types';
+import { CameraMotion, LutStyle, Scene, VisualBeat } from '../types';
 import { generateProceduralBackground } from './mediaLoader';
+import { audioEngine } from './audioEngine';
 
 export interface RenderState {
   currentScene: Scene;
   nextScene?: Scene | null;
-  sceneProgress: number; // 0.0 to 1.0
+  sceneProgress: number; // 0.0 to 1.0 (driven by exact AudioBuffer.duration)
   isTransitioning: boolean;
   transitionProgress: number; // 0.0 to 1.0
   showSubtitles?: boolean;
@@ -15,7 +16,7 @@ export class CanvasRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
 
-  // Floating ambient particles for cinematic depth
+  // Floating ambient particles & water/light motes for physical depth
   private particles: {
     x: number;
     y: number;
@@ -36,15 +37,15 @@ export class CanvasRenderer {
   }
 
   private initParticles(): void {
-    const count = 28;
+    const count = 32;
     this.particles = [];
     for (let i = 0; i < count; i++) {
       this.particles.push({
         x: Math.random() * 1280,
         y: Math.random() * 720,
-        radius: Math.random() * 2 + 1,
-        speedX: (Math.random() - 0.5) * 0.4,
-        speedY: -Math.random() * 0.5 - 0.2,
+        radius: Math.random() * 2.2 + 1,
+        speedX: (Math.random() - 0.5) * 0.45,
+        speedY: -Math.random() * 0.55 - 0.2,
         opacity: Math.random() * 0.45 + 0.15,
       });
     }
@@ -76,14 +77,18 @@ export class CanvasRenderer {
   }
 
   /**
-   * Draws either:
-   * - Priority 1: Real HTMLVideoElement stream onto the 16:9 Canvas (Auto-loops smoothly if narration exceeds clip duration).
-   * - Priority 2 (Smart Fallback): High-resolution 16:9 HTMLImageElement with cinematic Ken Burns Pan/Zoom (zoom-in, zoom-out, pan-left, pan-right).
-   * - Priority 3: Animated procedural canvas fallback so the screen is 100% immune to black frames.
+   * Draws a single media source (Beat or Scene video/image) with Ken Burns motion
    */
-  private drawSceneLayer(
-    scene: Scene,
-    progress: number,
+  private drawMediaSource(
+    videoEl: HTMLVideoElement | null | undefined,
+    videoLoaded: boolean | undefined,
+    imageEl: HTMLImageElement | null | undefined,
+    imageLoaded: boolean | undefined,
+    motion: CameraMotion,
+    lutStyle: LutStyle,
+    sceneId: number,
+    fallbackText: string,
+    localProgress: number,
     alpha: number = 1.0
   ): void {
     const { width, height } = this.canvas;
@@ -91,44 +96,31 @@ export class CanvasRenderer {
 
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.filter = this.getFilterString(lutStyle);
 
-    // Apply LUT color grading filter
-    const filterStr = this.getFilterString(scene.lut_style);
-    ctx.filter = filterStr;
-
-    const currentVideoElement = scene.videoElement;
-    const currentImageElement = scene.imageElement;
-
-    if (
-      currentVideoElement &&
-      scene.videoLoaded &&
-      currentVideoElement.readyState >= 2
-    ) {
-      // Priority 1: Live MP4/WebM Video Stream
-      currentVideoElement.loop = true;
-      currentVideoElement.muted = true;
-      if (currentVideoElement.ended || currentVideoElement.paused) {
-        currentVideoElement.play().catch(() => {});
+    if (videoEl && videoLoaded && videoEl.readyState >= 2) {
+      videoEl.loop = true;
+      videoEl.muted = true;
+      if (videoEl.ended || videoEl.paused) {
+        videoEl.play().catch(() => {});
       }
 
       let scale = 1.0;
       let offsetX = 0;
-      const motion: CameraMotion = scene.camera_motion || 'zoom-in';
-
       switch (motion) {
         case 'zoom-in':
-          scale = 1.0 + 0.08 * progress;
+          scale = 1.0 + 0.08 * localProgress;
           break;
         case 'zoom-out':
-          scale = 1.08 - 0.08 * progress;
+          scale = 1.08 - 0.08 * localProgress;
           break;
         case 'pan-left':
           scale = 1.06;
-          offsetX = 20 - 40 * progress;
+          offsetX = 20 - 40 * localProgress;
           break;
         case 'pan-right':
           scale = 1.06;
-          offsetX = -20 + 40 * progress;
+          offsetX = -20 + 40 * localProgress;
           break;
       }
 
@@ -138,42 +130,37 @@ export class CanvasRenderer {
         ctx.translate(-width / 2, -height / 2);
       }
 
-      ctx.drawImage(currentVideoElement, 0, 0, width, height);
+      ctx.drawImage(videoEl, 0, 0, width, height);
     } else if (
-      currentImageElement &&
-      scene.imageLoaded &&
-      currentImageElement.complete &&
-      currentImageElement.naturalWidth > 0
+      imageEl &&
+      imageLoaded &&
+      imageEl.complete &&
+      imageEl.naturalWidth > 0
     ) {
-      // Priority 2 (Smart Fallback): HD 16:9 Image with cinematic Ken Burns Pan/Zoom
       let scale = 1.0;
       let offsetX = 0;
-      let offsetY = 0;
-      const motion: CameraMotion = scene.camera_motion || 'zoom-in';
-
       switch (motion) {
         case 'zoom-in':
-          scale = 1.0 + 0.15 * progress;
+          scale = 1.0 + 0.15 * localProgress;
           break;
         case 'zoom-out':
-          scale = 1.15 - 0.15 * progress;
+          scale = 1.15 - 0.15 * localProgress;
           break;
         case 'pan-left':
           scale = 1.12;
-          offsetX = 45 - 90 * progress;
+          offsetX = 45 - 90 * localProgress;
           break;
         case 'pan-right':
           scale = 1.12;
-          offsetX = -45 + 90 * progress;
+          offsetX = -45 + 90 * localProgress;
           break;
       }
 
-      ctx.translate(width / 2 + offsetX, height / 2 + offsetY);
+      ctx.translate(width / 2 + offsetX, height / 2);
       ctx.scale(scale, scale);
       ctx.translate(-width / 2, -height / 2);
 
-      // Aspect-ratio cover draw onto 1280x720 canvas
-      const imgRatio = currentImageElement.naturalWidth / currentImageElement.naturalHeight;
+      const imgRatio = imageEl.naturalWidth / imageEl.naturalHeight;
       const canvasRatio = width / height;
       let drawW = width;
       let drawH = height;
@@ -190,13 +177,12 @@ export class CanvasRenderer {
         drawY = (height - drawH) / 2;
       }
 
-      ctx.drawImage(currentImageElement, drawX, drawY, drawW, drawH);
+      ctx.drawImage(imageEl, drawX, drawY, drawW, drawH);
     } else {
-      // Priority 3: Animated motion stream frame while remote media decodes
       const animatedFallback = generateProceduralBackground(
-        scene.lut_style,
-        scene.scene_id,
-        `${scene.title} ${scene.narration_vi}`
+        lutStyle,
+        sceneId,
+        fallbackText
       );
       ctx.drawImage(animatedFallback, 0, 0, width, height);
     }
@@ -205,7 +191,129 @@ export class CanvasRenderer {
   }
 
   /**
-   * Draws dynamic floating cinematic particles
+   * Resolves the active VisualBeat (and optional cross-fade previous beat) for a given sceneProgress
+   */
+  private getActiveBeatState(
+    scene: Scene,
+    progress: number
+  ): {
+    activeBeat?: VisualBeat;
+    prevBeat?: VisualBeat;
+    beatBlendAlpha: number;
+    beatLocalProgress: number;
+  } {
+    const beats = scene.visual_beats;
+    if (!beats || beats.length < 2) {
+      return { beatBlendAlpha: 1, beatLocalProgress: progress };
+    }
+
+    let activeIdx = 0;
+    for (let i = 0; i < beats.length; i++) {
+      const startRatio = beats[i].progress_ratio ?? i / beats.length;
+      if (progress >= startRatio) {
+        activeIdx = i;
+      }
+    }
+
+    const activeBeat = beats[activeIdx];
+    const startRatio = activeBeat.progress_ratio ?? activeIdx / beats.length;
+    const endRatio =
+      activeIdx + 1 < beats.length
+        ? beats[activeIdx + 1].progress_ratio ?? (activeIdx + 1) / beats.length
+        : 1.0;
+    const span = Math.max(0.1, endRatio - startRatio);
+    const beatLocalProgress = Math.max(0, Math.min(1, (progress - startRatio) / span));
+
+    // Smooth 0.5s cross-fade window (~0.08 of scene progress) when entering a new beat
+    const crossFadeWindow = 0.08;
+    if (activeIdx > 0 && progress - startRatio < crossFadeWindow) {
+      const blend = (progress - startRatio) / crossFadeWindow;
+      return {
+        activeBeat,
+        prevBeat: beats[activeIdx - 1],
+        beatBlendAlpha: Math.max(0, Math.min(1, blend)),
+        beatLocalProgress,
+      };
+    }
+
+    return {
+      activeBeat,
+      beatBlendAlpha: 1,
+      beatLocalProgress,
+    };
+  }
+
+  /**
+   * Draws a Scene Layer with Multi-Beat 0.5s Cross-Fade support
+   */
+  private drawSceneLayer(
+    scene: Scene,
+    progress: number,
+    alpha: number = 1.0
+  ): void {
+    const { activeBeat, prevBeat, beatBlendAlpha, beatLocalProgress } =
+      this.getActiveBeatState(scene, progress);
+
+    if (prevBeat && activeBeat && beatBlendAlpha < 1) {
+      this.drawMediaSource(
+        prevBeat.videoElement || scene.videoElement,
+        prevBeat.videoLoaded ?? scene.videoLoaded,
+        prevBeat.imageElement || scene.imageElement,
+        prevBeat.imageLoaded ?? scene.imageLoaded,
+        prevBeat.camera_motion || scene.camera_motion,
+        scene.lut_style,
+        scene.scene_id,
+        prevBeat.trigger_phrase || scene.title,
+        1.0,
+        alpha
+      );
+      this.drawMediaSource(
+        activeBeat.videoElement || scene.videoElement,
+        activeBeat.videoLoaded ?? scene.videoLoaded,
+        activeBeat.imageElement || scene.imageElement,
+        activeBeat.imageLoaded ?? scene.imageLoaded,
+        activeBeat.camera_motion || scene.camera_motion,
+        scene.lut_style,
+        scene.scene_id + 10,
+        activeBeat.trigger_phrase || scene.title,
+        beatLocalProgress,
+        alpha * beatBlendAlpha
+      );
+      return;
+    }
+
+    if (activeBeat && (activeBeat.videoElement || activeBeat.imageElement)) {
+      this.drawMediaSource(
+        activeBeat.videoElement || scene.videoElement,
+        activeBeat.videoLoaded ?? scene.videoLoaded,
+        activeBeat.imageElement || scene.imageElement,
+        activeBeat.imageLoaded ?? scene.imageLoaded,
+        activeBeat.camera_motion || scene.camera_motion,
+        scene.lut_style,
+        scene.scene_id,
+        activeBeat.trigger_phrase || scene.title,
+        beatLocalProgress,
+        alpha
+      );
+      return;
+    }
+
+    this.drawMediaSource(
+      scene.videoElement,
+      scene.videoLoaded,
+      scene.imageElement,
+      scene.imageLoaded,
+      scene.camera_motion,
+      scene.lut_style,
+      scene.scene_id,
+      `${scene.title} ${scene.narration_vi}`,
+      progress,
+      alpha
+    );
+  }
+
+  /**
+   * Draws floating physical light motes / aquatic bubbles
    */
   private drawFloatingParticles(): void {
     const ctx = this.ctx;
@@ -214,8 +322,8 @@ export class CanvasRenderer {
 
     for (const p of this.particles) {
       const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius * 2);
-      grad.addColorStop(0, `rgba(255, 230, 180, ${p.opacity})`);
-      grad.addColorStop(1, 'rgba(255, 230, 180, 0)');
+      grad.addColorStop(0, `rgba(255, 235, 190, ${p.opacity})`);
+      grad.addColorStop(1, 'rgba(255, 235, 190, 0)');
 
       ctx.fillStyle = grad;
       ctx.beginPath();
@@ -242,96 +350,223 @@ export class CanvasRenderer {
       width * 0.75
     );
     grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    grad.addColorStop(1, 'rgba(0, 0, 0, 0.5)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0.48)');
 
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
 
-    const bottomBar = ctx.createLinearGradient(0, height - 140, 0, height);
+    const bottomBar = ctx.createLinearGradient(0, height - 150, 0, height);
     bottomBar.addColorStop(0, 'rgba(5, 5, 10, 0)');
-    bottomBar.addColorStop(1, 'rgba(5, 5, 10, 0.72)');
+    bottomBar.addColorStop(1, 'rgba(5, 5, 10, 0.76)');
     ctx.fillStyle = bottomBar;
-    ctx.fillRect(0, height - 140, width, 140);
+    ctx.fillRect(0, height - 150, width, 150);
 
     ctx.restore();
   }
 
   /**
-   * Draws large Vietnamese subtitles with thick dark outline at the bottom of the screen
+   * Draws the animated Pedagogical Formula/Knowledge Badge in the top-right corner of the Canvas
    */
-  private drawSubtitles(narration: string): void {
+  private drawPedagogicalBadge(scene: Scene, progress: number): void {
+    const { activeBeat } = this.getActiveBeatState(scene, progress);
+    const badgeText = (
+      activeBeat?.pedagogical_badge ||
+      scene.pedagogical_badge ||
+      ''
+    ).trim();
+    const sectionText = (scene.pedagogical_section || '').trim();
+
+    if (!badgeText && !sectionText) return;
+
+    const { width } = this.canvas;
+    const ctx = this.ctx;
+
+    // Smooth slide-in during first 8% of scene
+    const slideRatio = Math.min(1, progress / 0.08);
+    const slideOffset = (1 - slideRatio) * 40;
+
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.15, slideRatio);
+
+    // Top-Right Formula / Knowledge Badge
+    if (badgeText) {
+      ctx.font = '700 16px "Be Vietnam Pro", system-ui, sans-serif';
+      const label = `📌 ${badgeText}`;
+      const textWidth = ctx.measureText(label).width;
+      const boxW = Math.min(520, textWidth + 36);
+      const boxH = 40;
+      const boxX = width - boxW - 28 + slideOffset;
+      const boxY = 24;
+
+      ctx.fillStyle = 'rgba(8, 15, 28, 0.86)';
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.65)';
+      ctx.lineWidth = 1.5;
+
+      ctx.beginPath();
+      ctx.roundRect(boxX, boxY, boxW, boxH, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#fbbf24';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, boxX + 16, boxY + boxH / 2, boxW - 28);
+    }
+
+    // Top-Left Pedagogical Section Pill
+    if (sectionText) {
+      ctx.font = '700 13px "Be Vietnam Pro", system-ui, sans-serif';
+      const secWidth = ctx.measureText(sectionText).width;
+      const pillW = Math.min(420, secWidth + 28);
+      const pillH = 32;
+      const pillX = 28 - slideOffset;
+      const pillY = 24;
+
+      ctx.fillStyle = 'rgba(6, 24, 38, 0.82)';
+      ctx.strokeStyle = 'rgba(34, 211, 238, 0.45)';
+      ctx.lineWidth = 1;
+
+      ctx.beginPath();
+      ctx.roundRect(pillX, pillY, pillW, pillH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#67e8f9';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(sectionText, pillX + 14, pillY + pillH / 2, pillW - 24);
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Draws Chunked Karaoke/Cinema Vietnamese Subtitles synchronized to `sceneProgress`
+   * + Live Audio Waveform Visualizer pulsing to the teacher's voice
+   */
+  private drawChunkedSubtitlesAndWaveform(narration: string, sceneProgress: number): void {
     if (!narration || !narration.trim()) return;
 
     const { width, height } = this.canvas;
     const ctx = this.ctx;
+
+    // Split narration into readable cinema subtitle chunks (~12 words per chunk) so only a short, crisp phrase appears at a time
+    const allWords = narration.trim().split(/\s+/);
+    const wordsPerChunk = 14;
+    const phraseChunks: string[][] = [];
+    for (let i = 0; i < allWords.length; i += wordsPerChunk) {
+      phraseChunks.push(allWords.slice(i, i + wordsPerChunk));
+    }
+
+    const activeChunkIdx = Math.min(
+      phraseChunks.length - 1,
+      Math.max(0, Math.floor(sceneProgress * phraseChunks.length))
+    );
+    const activeWords = phraseChunks[activeChunkIdx] || allWords;
+    const activePhrase = activeWords.join(' ');
+
+    // Progress within current chunk (for karaoke word highlight)
+    const chunkStartProgress = activeChunkIdx / phraseChunks.length;
+    const chunkSpan = 1 / phraseChunks.length;
+    const localChunkProgress = Math.max(
+      0,
+      Math.min(1, (sceneProgress - chunkStartProgress) / chunkSpan)
+    );
+    const highlightedWordCount = Math.ceil(localChunkProgress * activeWords.length);
 
     ctx.save();
     ctx.font = '700 25px "Be Vietnam Pro", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    const maxWidth = 980;
-    const words = narration.split(/\s+/);
-    const lines: string[] = [];
-    let currentLine = '';
+    const maxWidth = 900;
+    const lines: { text: string; wordStartIdx: number; wordEndIdx: number }[] = [];
+    let currentLineWords: string[] = [];
+    let lineStartIdx = 0;
 
-    for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const testWidth = ctx.measureText(testLine).width;
-      if (testWidth > maxWidth && currentLine) {
-        lines.push(currentLine);
-        currentLine = word;
+    activeWords.forEach((word, wIdx) => {
+      const testLine = [...currentLineWords, word].join(' ');
+      if (ctx.measureText(testLine).width > maxWidth && currentLineWords.length > 0) {
+        lines.push({
+          text: currentLineWords.join(' '),
+          wordStartIdx: lineStartIdx,
+          wordEndIdx: wIdx - 1,
+        });
+        currentLineWords = [word];
+        lineStartIdx = wIdx;
       } else {
-        currentLine = testLine;
+        currentLineWords.push(word);
       }
-    }
-    if (currentLine) lines.push(currentLine);
+    });
 
-    const displayLines = lines.slice(-2);
+    if (currentLineWords.length > 0) {
+      lines.push({
+        text: currentLineWords.join(' '),
+        wordStartIdx: lineStartIdx,
+        wordEndIdx: activeWords.length - 1,
+      });
+    }
+
+    const displayLines = lines.slice(0, 2);
     const lineHeight = 36;
     const totalTextHeight = displayLines.length * lineHeight;
 
-    const centerY = height - 70;
+    const centerY = height - 66;
     const cardH = totalTextHeight + 28;
     const maxLineWidth = Math.max(
-      ...displayLines.map((l) => ctx.measureText(l).width)
+      260,
+      ...displayLines.map((l) => ctx.measureText(l.text).width),
+      ctx.measureText(activePhrase).width > maxWidth ? maxWidth : ctx.measureText(activePhrase).width
     );
-    const cardW = Math.min(1080, maxLineWidth + 56);
+    const waveformWidth = 68;
+    const cardW = Math.min(1140, maxLineWidth + waveformWidth + 68);
+    const cardX = width / 2 - cardW / 2;
+    const cardY = centerY - cardH / 2;
 
-    ctx.fillStyle = 'rgba(6, 9, 15, 0.84)';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+    // Subtitle card background
+    ctx.fillStyle = 'rgba(6, 9, 16, 0.86)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
     ctx.lineWidth = 1;
 
     ctx.beginPath();
-    ctx.roundRect(
-      width / 2 - cardW / 2,
-      centerY - cardH / 2,
-      cardW,
-      cardH,
-      12
-    );
+    ctx.roundRect(cardX, cardY, cardW, cardH, 14);
     ctx.fill();
     ctx.stroke();
 
-    displayLines.forEach((line, index) => {
+    // Draw Live Audio Waveform Visualizer on the left side of the subtitle bar
+    const bands = audioEngine.getVoiceWaveformBands(10);
+    const waveStartX = cardX + 18;
+    const barGap = 5;
+    const barW = 3;
+    bands.forEach((amp, bIdx) => {
+      const barH = Math.max(4, amp * (cardH - 20));
+      const bx = waveStartX + bIdx * (barW + barGap);
+      const by = centerY - barH / 2;
+      ctx.fillStyle = amp > 0.25 ? '#fbbf24' : '#38bdf8';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, barW, barH, 2);
+      ctx.fill();
+    });
+
+    // Draw Subtitle Lines with thick dark outline and active karaoke highlight
+    const textCenterX = cardX + waveformWidth + (cardW - waveformWidth) / 2 - 8;
+    displayLines.forEach((lineObj, index) => {
       const lineY =
-        centerY -
-        totalTextHeight / 2 +
-        index * lineHeight +
-        lineHeight / 2;
+        centerY - totalTextHeight / 2 + index * lineHeight + lineHeight / 2;
 
       ctx.lineWidth = 6;
       ctx.strokeStyle = '#020617';
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
-      ctx.strokeText(line, width / 2, lineY);
+      ctx.strokeText(lineObj.text, textCenterX, lineY);
 
       ctx.shadowColor = 'rgba(0, 0, 0, 0.88)';
       ctx.shadowBlur = 8;
       ctx.shadowOffsetY = 2;
 
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(line, width / 2, lineY);
+      const isLineActive = highlightedWordCount > lineObj.wordStartIdx;
+      ctx.fillStyle = isLineActive ? '#ffffff' : '#cbd5e1';
+      ctx.fillText(lineObj.text, textCenterX, lineY);
 
       ctx.shadowColor = 'transparent';
     });
@@ -371,9 +606,13 @@ export class CanvasRenderer {
 
     this.drawFloatingParticles();
     this.drawCinematicVignette();
+    this.drawPedagogicalBadge(state.currentScene, state.sceneProgress);
 
     if (state.showSubtitles !== false) {
-      this.drawSubtitles(state.currentScene.narration_vi);
+      this.drawChunkedSubtitlesAndWaveform(
+        state.currentScene.narration_vi,
+        state.sceneProgress
+      );
     }
   }
 }

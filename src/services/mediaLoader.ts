@@ -1,16 +1,16 @@
-import { LutStyle, Scene } from '../types';
+import { LutStyle, Scene, VisualBeat } from '../types';
 import {
   translateNarrationToVideoQueries,
   scoreVideoCandidateForQuery,
   getNextCandidateVideoIndex,
   RawVideoSearchItem,
 } from './videoQueryTranslator';
+import { keyRotationEngine } from './keyRotation';
 
 const videoCache = new Map<string, HTMLVideoElement>();
 const imageCache = new Map<string, HTMLImageElement>();
 const wikimediaQueryCache = new Map<string, string[]>();
 const proceduralCanvasCache = new Map<string, HTMLCanvasElement>();
-const synthesizedBlobUrlCache = new Map<string, string>();
 
 // Detect static hosting environments (only GitHub Pages or local file protocol)
 const isStaticHost =
@@ -25,6 +25,76 @@ export function extractVisualKeywordsFromVietnamese(viText: string): string | nu
   if (!viText) return null;
   const translated = translateNarrationToVideoQueries(viText);
   return translated.primaryQueryEn || null;
+}
+
+/**
+ * Queries Pexels / Pixabay HD MP4 Video APIs when API keys are configured in KeyManagerModal
+ */
+export async function searchPexelsOrPixabayVideos(
+  queries: string[],
+  usedUrls?: Set<string>
+): Promise<string[]> {
+  const extKeys = keyRotationEngine.getExternalKeys();
+  const pexelsKey = extKeys.pexelsApiKey?.trim();
+  const pixabayKey = extKeys.pixabayApiKey?.trim();
+  if (!pexelsKey && !pixabayKey) return [];
+
+  const foundUrls: string[] = [];
+  const primaryQuery = queries.find(Boolean) || 'nature science';
+
+  if (pexelsKey) {
+    try {
+      const res = await fetch(
+        `https://api.pexels.com/videos/search?query=${encodeURIComponent(
+          primaryQuery
+        )}&orientation=landscape&size=medium&per_page=4`,
+        {
+          headers: { Authorization: pexelsKey },
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const vid of data?.videos || []) {
+          const files: any[] = vid?.video_files || [];
+          const hdFile =
+            files.find(
+              (f) =>
+                f.file_type === 'video/mp4' &&
+                f.width >= 1280 &&
+                f.width <= 1920
+            ) || files.find((f) => f.file_type === 'video/mp4');
+          if (hdFile?.link && (!usedUrls || !usedUrls.has(hdFile.link))) {
+            foundUrls.push(hdFile.link);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (pixabayKey && foundUrls.length < 2) {
+    try {
+      const res = await fetch(
+        `https://pixabay.com/api/videos/?key=${encodeURIComponent(
+          pixabayKey
+        )}&q=${encodeURIComponent(primaryQuery)}&per_page=4`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const hit of data?.hits || []) {
+          const url = hit?.videos?.medium?.url || hit?.videos?.small?.url;
+          if (url && (!usedUrls || !usedUrls.has(url))) {
+            foundUrls.push(url);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return foundUrls;
 }
 
 /**
@@ -592,14 +662,17 @@ export async function fetchVerifiedSceneMedia(
     wikipediaTopicEn
   );
 
-  const wikimediaUrls = await searchWikimediaVideoPool(
-    translation.primaryQueryEn,
-    narrationVi,
-    usedUrls
-  );
+  const [externalVideoUrls, wikimediaUrls] = await Promise.all([
+    searchPexelsOrPixabayVideos([keywordsEn, translation.primaryQueryEn], usedUrls),
+    searchWikimediaVideoPool(translation.primaryQueryEn, narrationVi, usedUrls),
+  ]);
 
   const allCandidateUrls: string[] = [];
-  for (const u of [...wikimediaUrls, ...translation.curatedVideoUrls]) {
+  for (const u of [
+    ...externalVideoUrls,
+    ...wikimediaUrls,
+    ...translation.curatedVideoUrls,
+  ]) {
     if (u && !allCandidateUrls.includes(u)) {
       allCandidateUrls.push(u);
     }
@@ -836,3 +909,77 @@ export function generateProceduralBackground(
 
   return canvas;
 }
+
+/**
+ * V3.0 Strict Multi-Beat Media Loader (Timeout 5s/Beat):
+ * Loads real MP4/WebM video (or HD 1280x720 AI/Documentary fallback image) for each visual_beat in a scene
+ * so the Canvas can cross-fade smoothly (0.5s) across beats as the teacher speaks.
+ */
+export async function loadSceneVisualBeats(
+  scene: Scene,
+  usedUrls?: Set<string>
+): Promise<VisualBeat[]> {
+  if (!scene.visual_beats || scene.visual_beats.length === 0) return [];
+
+  return Promise.all(
+    scene.visual_beats.map(async (beat, bIdx) => {
+      const primaryQuery =
+        beat.search_queries_ranked?.[0] ||
+        scene.exact_video_search_en ||
+        scene.search_keywords_en;
+      try {
+        const media = await fetchVerifiedSceneMedia(
+          primaryQuery,
+          beat.trigger_phrase || scene.narration_vi,
+          usedUrls,
+          beat.ai_visual_prompt,
+          scene.wikipedia_topic_en,
+          (scene.scene_id || 1) * 10 + bIdx + 1,
+          bIdx
+        );
+        return {
+          ...beat,
+          videoUrl: media.videoUrl,
+          videoElement: media.videoElement,
+          videoLoaded: true,
+          imageUrl: media.imageUrl,
+          imageElement: media.imageElement,
+          imageLoaded: Boolean(media.imageElement),
+          sourceLabel: media.videoSourceLabel,
+        };
+      } catch {
+        return beat;
+      }
+    })
+  );
+}
+
+/**
+ * Releases all <video> elements (including inside visual_beats) and clears memory caches
+ * when "🔄 Tạo Mới Video" is clicked.
+ */
+export function releaseAllSceneMedia(scenes: Scene[]): void {
+  const cleanVideoEl = (v?: HTMLVideoElement | null) => {
+    if (!v) return;
+    try {
+      v.pause();
+      v.srcObject = null;
+      v.removeAttribute('src');
+      v.load();
+    } catch {
+      // ignore
+    }
+  };
+
+  scenes.forEach((sc) => {
+    cleanVideoEl(sc.videoElement);
+    sc.visual_beats?.forEach((beat) => {
+      cleanVideoEl(beat.videoElement);
+    });
+  });
+
+  videoCache.forEach((v) => cleanVideoEl(v));
+  videoCache.clear();
+  imageCache.clear();
+}
+
